@@ -1,27 +1,56 @@
-import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, shell } from 'electron'
-import { DSH_URL, PRODUCT_NAME } from '../shared/config.js'
-import type { StartupStatus } from '../shared/contracts.js'
-import { isAllowedDshNavigation, isAllowedExternalUrl } from './navigation-policy.js'
+import { join } from 'node:path'
+import { app, BrowserWindow, shell, WebContentsView } from 'electron'
+import { DEEPSEEK_CHAT_URL, DSH_URL, PRODUCT_NAME } from '../shared/config.js'
+import type { StartupStatus, WorkspaceTab, WorkspaceTabState } from '../shared/contracts.js'
+import {
+  isAllowedDeepSeekNavigation,
+  isAllowedDshNavigation,
+  isAllowedExternalUrl
+} from './navigation-policy.js'
+
+const TOOLBAR_HEIGHT = 48
 
 export class WindowController {
   private startupWindow: BrowserWindow | null = null
-  private dshWindow: BrowserWindow | null = null
+  private workspaceWindow: BrowserWindow | null = null
+  private dshView: WebContentsView | null = null
+  private deepseekView: WebContentsView | null = null
+  private activeTab: WorkspaceTab = 'dsh'
+  private deepseekStarted = false
+  private deepseekLoadTimer: NodeJS.Timeout | null = null
 
-  public constructor(private readonly dshUrl = DSH_URL) {}
+  public constructor(
+    private readonly dshUrl = DSH_URL,
+    private readonly deepseekUrl = DEEPSEEK_CHAT_URL
+  ) {}
 
   public get activeWindow(): BrowserWindow | null {
-    return this.dshWindow ?? this.startupWindow
+    return this.workspaceWindow ?? this.startupWindow
   }
 
   public isStartupSender(senderId: number): boolean {
     return this.startupWindow?.webContents.id === senderId
   }
 
+  public isShellSender(senderId: number): boolean {
+    return this.workspaceWindow?.webContents.id === senderId
+  }
+
+  private async loadRenderer(window: BrowserWindow, page: 'startup' | 'shell'): Promise<void> {
+    if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
+      const base = process.env.ELECTRON_RENDERER_URL.endsWith('/')
+        ? process.env.ELECTRON_RENDERER_URL
+        : `${process.env.ELECTRON_RENDERER_URL}/`
+      await window.loadURL(new URL(`${page}/index.html`, base).toString())
+    } else {
+      await window.loadFile(join(__dirname, `../renderer/${page}/index.html`))
+    }
+  }
+
   public createStartupWindow(): BrowserWindow {
     if (this.startupWindow && !this.startupWindow.isDestroyed()) return this.startupWindow
-    const bounds = this.dshWindow?.getBounds()
+    const bounds = this.workspaceWindow?.getBounds()
     const window = new BrowserWindow({
       title: PRODUCT_NAME,
       width: bounds?.width ?? 1180,
@@ -44,11 +73,7 @@ export class WindowController {
     window.on('closed', () => {
       if (this.startupWindow === window) this.startupWindow = null
     })
-    if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
-      void window.loadURL(process.env.ELECTRON_RENDERER_URL)
-    } else {
-      void window.loadFile(join(__dirname, '../renderer/index.html'))
-    }
+    void this.loadRenderer(window, 'startup')
     return window
   }
 
@@ -61,7 +86,129 @@ export class WindowController {
     }
   }
 
+  private sendTabState(state: WorkspaceTabState): void {
+    const window = this.workspaceWindow
+    if (!window || window.isDestroyed()) return
+    window.webContents.send('shell:tab-state', state)
+  }
+
+  private layoutViews(): void {
+    const window = this.workspaceWindow
+    if (!window || window.isDestroyed()) return
+    const size = window.getContentSize()
+    const width = size[0] ?? 0
+    const height = size[1] ?? 0
+    const bounds = { x: 0, y: TOOLBAR_HEIGHT, width, height: Math.max(0, height - TOOLBAR_HEIGHT) }
+    this.dshView?.setBounds(bounds)
+    this.deepseekView?.setBounds(bounds)
+  }
+
+  private createDshView(): WebContentsView {
+    const view = new WebContentsView({
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true
+      }
+    })
+    view.webContents.on('will-navigate', (event, url) => {
+      if (!isAllowedDshNavigation(url, this.dshUrl)) event.preventDefault()
+    })
+    view.webContents.setWindowOpenHandler(({ url }) => {
+      if (isAllowedExternalUrl(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    view.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+    return view
+  }
+
+  private createDeepSeekView(): WebContentsView {
+    const view = new WebContentsView({
+      webPreferences: {
+        partition: 'persist:deepseek-chat',
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true
+      }
+    })
+    const chromeVersion = process.versions.chrome
+    view.webContents.setUserAgent(
+      `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`
+    )
+    view.webContents.on('will-navigate', (event, url) => {
+      if (!isAllowedDeepSeekNavigation(url)) event.preventDefault()
+    })
+    view.webContents.setWindowOpenHandler(({ url }) => {
+      if (isAllowedDeepSeekNavigation(url)) void view.webContents.loadURL(url)
+      else if (isAllowedExternalUrl(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    view.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+    view.webContents.on('did-start-loading', () => {
+      this.sendTabState({ tab: 'deepseek', loading: true })
+      if (this.deepseekLoadTimer) clearTimeout(this.deepseekLoadTimer)
+      this.deepseekLoadTimer = setTimeout(() => {
+        this.sendTabState({
+          tab: 'deepseek',
+          loading: false,
+          detail: 'DeepSeek 加载时间较长，请检查网络或代理设置'
+        })
+      }, 20_000)
+    })
+    view.webContents.on('did-stop-loading', () => {
+      if (this.deepseekLoadTimer) clearTimeout(this.deepseekLoadTimer)
+      this.deepseekLoadTimer = null
+      this.sendTabState({ tab: 'deepseek', loading: false })
+    })
+    view.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+      if (!isMainFrame || code === -3) return
+      this.sendTabState({
+        tab: 'deepseek',
+        loading: false,
+        detail: `DeepSeek 加载失败：${description} (${code})`
+      })
+    })
+    return view
+  }
+
+  private startDeepSeek(): void {
+    if (this.deepseekStarted || !this.deepseekView) return
+    this.deepseekStarted = true
+    void this.deepseekView.webContents.loadURL(this.deepseekUrl).catch((error: unknown) => {
+      this.sendTabState({
+        tab: 'deepseek',
+        loading: false,
+        detail: `DeepSeek 加载失败：${error instanceof Error ? error.message : String(error)}`
+      })
+    })
+  }
+
+  public async selectTab(tab: WorkspaceTab): Promise<void> {
+    const window = this.workspaceWindow
+    if (!window || window.isDestroyed() || !this.dshView || !this.deepseekView) return
+    this.activeTab = tab
+    this.dshView.setVisible(tab === 'dsh')
+    this.deepseekView.setVisible(tab === 'deepseek')
+    window.setTitle(tab === 'deepseek' ? `${PRODUCT_NAME} — DeepSeek 对话` : PRODUCT_NAME)
+    window.webContents.send('shell:tab-changed', tab)
+    if (tab === 'deepseek') {
+      this.startDeepSeek()
+      this.deepseekView.webContents.focus()
+    } else {
+      this.sendTabState({ tab: 'dsh', loading: false })
+      this.dshView.webContents.focus()
+    }
+  }
+
   public async showDsh(): Promise<BrowserWindow> {
+    const existing = this.workspaceWindow
+    if (existing && !existing.isDestroyed()) {
+      existing.show()
+      return existing
+    }
+
     const startup = this.startupWindow
     const bounds = startup?.getBounds()
     const window = new BrowserWindow({
@@ -73,51 +220,72 @@ export class WindowController {
       minWidth: 760,
       minHeight: 560,
       show: false,
-      backgroundColor: '#0b0d10',
+      backgroundColor: '#111722',
       webPreferences: {
+        preload: join(__dirname, '../preload/shell.mjs'),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true
       }
     })
-    this.dshWindow = window
-    window.webContents.on('will-navigate', (event, url) => {
-      if (!isAllowedDshNavigation(url, this.dshUrl)) event.preventDefault()
-    })
-    window.webContents.setWindowOpenHandler(({ url }) => {
-      if (isAllowedExternalUrl(url)) void shell.openExternal(url)
-      return { action: 'deny' }
-    })
-    window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
-      callback(false)
-    })
+    this.workspaceWindow = window
+    this.dshView = this.createDshView()
+    this.deepseekView = this.createDeepSeekView()
+    this.deepseekView.setVisible(false)
+    window.contentView.addChildView(this.dshView)
+    window.contentView.addChildView(this.deepseekView)
+    window.on('resize', () => this.layoutViews())
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.on('closed', () => {
-      if (this.dshWindow === window) this.dshWindow = null
+      if (this.workspaceWindow !== window) return
+      this.workspaceWindow = null
+      this.closeViews()
     })
-    await window.loadURL(this.dshUrl)
+    this.layoutViews()
+
+    await Promise.all([
+      this.loadRenderer(window, 'shell'),
+      this.dshView.webContents.loadURL(this.dshUrl)
+    ])
+    this.layoutViews()
     window.show()
+    window.webContents.send('shell:tab-changed', 'dsh')
     startup?.destroy()
     this.startupWindow = null
-    const screenshotPath = process.env.DSH_DESKTOP_TEST_MODE === '1'
-      ? process.env.DSH_DESKTOP_SCREENSHOT
-      : undefined
-    if (screenshotPath) {
-      await new Promise((resolve) => setTimeout(resolve, 1_500))
-      const image = await window.webContents.capturePage()
-      await writeFile(screenshotPath, image.toPNG())
-    }
+
     return window
+  }
+
+  public async captureActive(path: string, delayMs = 1_500): Promise<void> {
+    const view = this.activeTab === 'deepseek' ? this.deepseekView : this.dshView
+    if (!view || view.webContents.isDestroyed()) throw new Error('Active workspace view is unavailable')
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+    const image = await view.webContents.capturePage()
+    await writeFile(path, image.toPNG())
+  }
+
+  private closeViews(): void {
+    for (const view of [this.dshView, this.deepseekView]) {
+      if (view && !view.webContents.isDestroyed()) view.webContents.close()
+    }
+    this.dshView = null
+    this.deepseekView = null
+    if (this.deepseekLoadTimer) clearTimeout(this.deepseekLoadTimer)
+    this.deepseekLoadTimer = null
+    this.deepseekStarted = false
+    this.activeTab = 'dsh'
   }
 
   public showStartup(): BrowserWindow {
     const startup = this.createStartupWindow()
-    const dsh = this.dshWindow
-    if (dsh && !dsh.isDestroyed()) {
-      startup.setBounds(dsh.getBounds())
-      dsh.destroy()
+    const workspace = this.workspaceWindow
+    if (workspace && !workspace.isDestroyed()) {
+      startup.setBounds(workspace.getBounds())
+      workspace.destroy()
     }
-    this.dshWindow = null
+    this.workspaceWindow = null
+    this.closeViews()
     startup.show()
     return startup
   }
@@ -131,9 +299,10 @@ export class WindowController {
   }
 
   public destroyAll(): void {
-    this.dshWindow?.destroy()
+    this.workspaceWindow?.destroy()
     this.startupWindow?.destroy()
-    this.dshWindow = null
+    this.workspaceWindow = null
     this.startupWindow = null
+    this.closeViews()
   }
 }

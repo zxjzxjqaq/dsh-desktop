@@ -16,3 +16,13 @@ export function isAllowedExternalUrl(value: string): boolean {
     return false
   }
 }
+
+export function isAllowedDeepSeekNavigation(value: string): boolean {
+  try {
+    const url = new URL(value)
+    const hostname = url.hostname.toLowerCase()
+    return url.protocol === 'https:' && (hostname === 'deepseek.com' || hostname.endsWith('.deepseek.com'))
+  } catch {
+    return false
+  }
+}

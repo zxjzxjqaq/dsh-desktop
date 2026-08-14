@@ -1,0 +1,166 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI Variable", "Microsoft YaHei UI", system-ui, sans-serif;
+  background: #111722;
+  color: #eef3ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.workspace-bar {
+  height: 48px;
+  display: grid;
+  grid-template-columns: 190px 1fr minmax(140px, auto);
+  align-items: center;
+  gap: 18px;
+  padding: 0 16px 0 12px;
+  border-bottom: 1px solid #283247;
+  background: linear-gradient(90deg, #101622 0%, #151d2d 52%, #101622 100%);
+  user-select: none;
+}
+
+.brand,
+.tabs,
+.tab {
+  display: flex;
+  align-items: center;
+}
+
+.brand {
+  gap: 9px;
+  min-width: 0;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 26px;
+  border-radius: 7px;
+  background: #2f6df6;
+  color: white;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.brand-name {
+  color: #c8d2e6;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.tabs {
+  align-self: stretch;
+  justify-content: center;
+  gap: 4px;
+}
+
+.tab {
+  position: relative;
+  align-self: stretch;
+  gap: 8px;
+  padding: 0 17px;
+  border: 0;
+  background: transparent;
+  color: #8f9bb0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab::after {
+  position: absolute;
+  right: 14px;
+  bottom: 0;
+  left: 14px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  content: "";
+}
+
+.tab:hover {
+  color: #dce5f6;
+  background: rgb(255 255 255 / 3%);
+}
+
+.tab:focus-visible {
+  outline: 2px solid #78a3ff;
+  outline-offset: -3px;
+}
+
+.tab.is-active {
+  color: #fff;
+}
+
+.tab.is-active::after {
+  background: #5c8dff;
+}
+
+.tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.dsh-dot {
+  background: #66a0ff;
+  box-shadow: 0 0 0 3px rgb(102 160 255 / 12%);
+}
+
+.deepseek-dot {
+  background: #67d5c4;
+  box-shadow: 0 0 0 3px rgb(103 213 196 / 12%);
+}
+
+.state {
+  overflow: hidden;
+  color: #748198;
+  font-size: 11px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.state.is-loading {
+  color: #9cb7ef;
+}
+
+.state.is-error {
+  color: #ff9b9b;
+}
+
+@media (max-width: 760px) {
+  .workspace-bar {
+    grid-template-columns: auto 1fr;
+  }
+
+  .brand-name,
+  .state {
+    display: none;
+  }
+
+  .tabs {
+    justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tab,
+  .tab::after {
+    transition: color 140ms ease, background 140ms ease;
+  }
+}

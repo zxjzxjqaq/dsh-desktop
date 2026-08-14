@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { app, ipcMain, shell } from 'electron'
 import { DSH_HOST, DSH_PORT, INITIAL_DSH_VERSION, PRODUCT_NAME } from '../shared/config.js'
-import type { StartupAction } from '../shared/contracts.js'
+import type { StartupAction, WorkspaceTab } from '../shared/contracts.js'
 import { installAppMenu } from './app-menu.js'
 import { DesktopUpdater } from './app-updater.js'
 import { DshPackageManager } from './dsh-package-manager.js'
@@ -27,13 +27,17 @@ const windows = new WindowController(dshUrl)
 let orchestrator: StartupOrchestrator | null = null
 let quitting = false
 
-function verifySender(senderId: number): void {
+function verifyStartupSender(senderId: number): void {
   if (!windows.isStartupSender(senderId)) throw new Error('Rejected IPC sender')
+}
+
+function verifyShellSender(senderId: number): void {
+  if (!windows.isShellSender(senderId)) throw new Error('Rejected shell IPC sender')
 }
 
 function registerIpc(paths: ReturnType<typeof createAppPaths>): void {
   ipcMain.handle('startup:get-versions', (event) => {
-    verifySender(event.sender.id)
+    verifyStartupSender(event.sender.id)
     const versions = orchestrator?.versions
     return {
       app: app.getVersion(),
@@ -43,7 +47,7 @@ function registerIpc(paths: ReturnType<typeof createAppPaths>): void {
     }
   })
   ipcMain.handle('startup:action', async (event, action: StartupAction) => {
-    verifySender(event.sender.id)
+    verifyStartupSender(event.sender.id)
     switch (action) {
       case 'retry':
         await orchestrator?.run()
@@ -61,6 +65,11 @@ function registerIpc(paths: ReturnType<typeof createAppPaths>): void {
         throw new Error('Unknown startup action')
     }
   })
+  ipcMain.handle('shell:select-tab', async (event, tab: WorkspaceTab) => {
+    verifyShellSender(event.sender.id)
+    if (tab !== 'dsh' && tab !== 'deepseek') throw new Error('Unknown workspace tab')
+    await windows.selectTab(tab)
+  })
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -74,7 +83,11 @@ if (!hasSingleInstanceLock) {
     const paths = createAppPaths(app.getPath('userData'))
     const logger = new FileLogger(paths.logs)
     await logger.prune()
-    const packages = new DshPackageManager(paths)
+    const packages = new DshPackageManager(paths, {
+      bundledDirectory: app.isPackaged
+        ? join(process.resourcesPath, 'dsh-runtime', INITIAL_DSH_VERSION)
+        : undefined
+    })
     orchestrator = new StartupOrchestrator(windows, packages, logger, dshUrl)
     const updateLock = new UpdateLock()
     const desktopUpdater = new DesktopUpdater(
@@ -96,6 +109,16 @@ if (!hasSingleInstanceLock) {
     await logger.write('desktop', `Starting ${PRODUCT_NAME} ${app.getVersion()}, pinned DSH ${INITIAL_DSH_VERSION}`)
     const ready = await orchestrator.run()
     const autoExitMs = testMode ? Number(process.env.DSH_DESKTOP_AUTO_EXIT_MS ?? 0) : 0
+    if (ready && testMode) {
+      const testTab = process.env.DSH_DESKTOP_TEST_TAB
+      if (testTab === 'deepseek') await windows.selectTab('deepseek')
+      const screenshotPath = process.env.DSH_DESKTOP_SCREENSHOT
+      const captureDelayMs = Number(process.env.DSH_DESKTOP_TEST_CAPTURE_DELAY_MS ?? 1_500)
+      if (screenshotPath) await windows.captureActive(
+        screenshotPath,
+        Number.isFinite(captureDelayMs) && captureDelayMs >= 0 ? captureDelayMs : 1_500
+      )
+    }
     if (ready && Number.isFinite(autoExitMs) && autoExitMs > 0) {
       setTimeout(() => app.quit(), autoExitMs)
     }

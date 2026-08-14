@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; script-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DSH Desktop</title>
+    <link rel="stylesheet" href="./shell.css" />
+  </head>
+  <body>
+    <header class="workspace-bar">
+      <div class="brand" aria-label="DSH Desktop">
+        <span class="brand-mark" aria-hidden="true">DSH</span>
+        <span class="brand-name">Workspace</span>
+      </div>
+      <nav class="tabs" aria-label="工作区">
+        <button class="tab is-active" type="button" data-tab="dsh" aria-selected="true">
+          <span class="tab-dot dsh-dot" aria-hidden="true"></span>
+          DSH
+        </button>
+        <button class="tab" type="button" data-tab="deepseek" aria-selected="false">
+          <span class="tab-dot deepseek-dot" aria-hidden="true"></span>
+          DeepSeek 对话
+        </button>
+      </nav>
+      <div id="state" class="state" role="status">DSH 已连接</div>
+    </header>
+    <script type="module" src="./shell.ts"></script>
+  </body>
+</html>

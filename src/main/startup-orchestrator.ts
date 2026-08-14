@@ -51,6 +51,7 @@ export class StartupOrchestrator {
   }
 
   private async runOnce(): Promise<boolean> {
+    const startupStartedAt = Date.now()
     this.windows.sendStatus(
       status('checking-node', '正在检测 Node.js', `需要 Node.js ${NODE_VERSION_RANGE}`)
     )
@@ -68,21 +69,46 @@ export class StartupOrchestrator {
       return false
     }
     this.environment = environment
+    await this.logger.write('desktop', `Node environment ready in ${Date.now() - startupStartedAt}ms`)
 
     this.windows.sendStatus(
       status(
         'preparing-dsh',
-        '正在准备 DSH',
-        `Node.js ${environment.nodeVersion} · npm ${environment.npmVersion}`
+        '正在验证内置 DSH',
+        `DSH ${INITIAL_DSH_VERSION} · Node.js ${environment.nodeVersion}`
       )
     )
     let install
     try {
       const current = await this.packages.current()
-      install = current
-        ? await this.packages.validate(current.directory, current.version)
-        : await this.packages.install(environment, INITIAL_DSH_VERSION)
-      if (!current) await this.packages.select(install.selection)
+      if (current) {
+        try {
+          install = await this.packages.validate(current.directory, current.version)
+        } catch (error) {
+          await this.logger.write('desktop', `Current DSH selection is invalid; using bundled fallback: ${String(error)}`)
+        }
+      }
+      if (!install) {
+        try {
+          install = await this.packages.bundled(INITIAL_DSH_VERSION)
+        } catch (error) {
+          await this.logger.write('desktop', `Bundled DSH is unavailable; using network fallback: ${String(error)}`)
+        }
+        if (install) {
+          await this.logger.write('desktop', `Using bundled DSH ${install.selection.version}`)
+        } else {
+          this.windows.sendStatus(
+            status(
+              'preparing-dsh',
+              '正在下载 DSH 运行环境',
+              `内置运行环境不可用，正在获取 DSH ${INITIAL_DSH_VERSION}`
+            )
+          )
+          install = await this.packages.install(environment, INITIAL_DSH_VERSION)
+        }
+        await this.packages.select(install.selection)
+      }
+      await this.logger.write('desktop', `DSH runtime ready in ${Date.now() - startupStartedAt}ms`)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       await this.logger.write('desktop', `DSH package error: ${detail}`)
@@ -113,9 +139,13 @@ export class StartupOrchestrator {
       status('waiting-for-health', '正在连接 DSH Web', '正在等待 127.0.0.1:3080 就绪…')
     )
     try {
+      const serviceStartedAt = Date.now()
       await service.start()
       this.crashRestarts = 0
-      await this.logger.write('desktop', `DSH ${install.selection.version} is healthy`)
+      await this.logger.write(
+        'desktop',
+        `DSH ${install.selection.version} is healthy in ${Date.now() - serviceStartedAt}ms; total startup ${Date.now() - startupStartedAt}ms`
+      )
       await this.windows.showDsh()
       return true
     } catch (error) {

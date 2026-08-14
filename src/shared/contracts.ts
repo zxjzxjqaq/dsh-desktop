@@ -32,3 +32,17 @@ export interface StartupStatus {
   readonly diagnostic?: string
   readonly actions: readonly StartupAction[]
 }
+
+export type WorkspaceTab = 'dsh' | 'deepseek'
+
+export interface WorkspaceTabState {
+  readonly tab: WorkspaceTab
+  readonly loading: boolean
+  readonly detail?: string
+}
+
+export interface ShellBridge {
+  selectTab(tab: WorkspaceTab): Promise<void>
+  onTabChanged(listener: (tab: WorkspaceTab) => void): () => void
+  onTabState(listener: (state: WorkspaceTabState) => void): () => void
+}

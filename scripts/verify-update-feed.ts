@@ -1,8 +1,10 @@
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { createUpdateServer } from './local-update-server.js'
 
 const host = '127.0.0.1'
+const appVersion = (JSON.parse(await readFile(resolve('package.json'), 'utf8')) as { version: string }).version
+const installerName = `DSH-Desktop-${appVersion}-Setup.exe`
 const server = createUpdateServer(resolve('dist'))
 await new Promise<void>((done) => server.listen(0, host, done))
 const address = server.address()
@@ -12,9 +14,9 @@ const baseUrl = `http://${host}:${address.port}`
 try {
   const manifest = await fetch(`${baseUrl}/latest.yml`)
   const manifestBody = await manifest.text()
-  const installer = await fetch(`${baseUrl}/DSH-Desktop-0.1.0-Setup.exe`, { method: 'HEAD' })
+  const installer = await fetch(`${baseUrl}/${installerName}`, { method: 'HEAD' })
   const traversal = await fetch(`${baseUrl}/..%2Fpackage.json`)
-  const installerPath = resolve('dist/DSH-Desktop-0.1.0-Setup.exe')
+  const installerPath = resolve('dist', installerName)
   const installerInfo = await stat(installerPath)
   const result = {
     baseUrl,
@@ -28,7 +30,7 @@ try {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
   if (
     result.manifestStatus !== 200 ||
-    result.manifestVersion !== '0.1.0' ||
+    result.manifestVersion !== appVersion ||
     result.installerStatus !== 200 ||
     result.installerBytes !== result.filesystemBytes ||
     result.traversalStatus !== 404

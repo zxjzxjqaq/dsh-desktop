@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import semver from 'semver'
 import type { AppPaths } from './platform/app-paths.js'
 import { versionDirectory } from './platform/app-paths.js'
@@ -26,6 +26,23 @@ interface DshManifest {
   readonly bin?: string | Readonly<Record<string, string>>
 }
 
+interface BundledRuntimeManifest {
+  readonly schema?: number
+  readonly version?: string
+  readonly packageJsonSha256?: string
+  readonly binarySha256?: string
+  readonly binary?: string
+}
+
+export interface DshPackageManagerOptions {
+  readonly runner?: ProcessRunner
+  readonly bundledDirectory?: string
+}
+
+function sha256(content: Buffer): string {
+  return createHash('sha256').update(content).digest('hex')
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path)
@@ -37,10 +54,16 @@ async function exists(path: string): Promise<boolean> {
 }
 
 export class DshPackageManager {
+  private readonly runner: ProcessRunner
+  private readonly bundledDirectory: string | null
+
   public constructor(
     private readonly paths: AppPaths,
-    private readonly runner: ProcessRunner = runProcess
-  ) {}
+    options: DshPackageManagerOptions = {}
+  ) {
+    this.runner = options.runner ?? runProcess
+    this.bundledDirectory = options.bundledDirectory ? resolve(options.bundledDirectory) : null
+  }
 
   public async current(): Promise<DshSelection | null> {
     return await readJson<DshSelection>(this.paths.currentPointer)
@@ -50,30 +73,63 @@ export class DshPackageManager {
     return await readJson<DshSelection>(this.paths.previousPointer)
   }
 
-  public async validate(directory: string, expectedVersion: string): Promise<DshInstall> {
+  private async validateAt(directory: string, expectedVersion: string): Promise<DshInstall> {
     if (semver.valid(expectedVersion) !== expectedVersion) {
       throw new Error(`Invalid DSH version: ${expectedVersion}`)
     }
-    const expectedDirectory = versionDirectory(this.paths, expectedVersion)
-    if (resolve(directory) !== expectedDirectory) throw new Error('DSH selection is outside the managed version store')
-    const packageRoot = resolve(expectedDirectory, 'node_modules', '@deepseek-ai', 'dsh')
+    const resolvedDirectory = resolve(directory)
+    const packageRoot = resolve(resolvedDirectory, 'node_modules', '@deepseek-ai', 'dsh')
     const manifestPath = join(packageRoot, 'package.json')
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as DshManifest
+    const manifestContent = await readFile(manifestPath)
+    const manifest = JSON.parse(manifestContent.toString('utf8')) as DshManifest
     if (manifest.name !== '@deepseek-ai/dsh') throw new Error('Installed package name is not @deepseek-ai/dsh')
     if (manifest.version !== expectedVersion) throw new Error('Installed DSH version does not match request')
     const relativeBinary = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.dsh
     if (!relativeBinary) throw new Error('Installed DSH package has no dsh binary')
     const binaryPath = resolve(packageRoot, relativeBinary)
-    if (!binaryPath.startsWith(`${packageRoot}\\`)) throw new Error('DSH binary escaped package root')
+    if (!binaryPath.startsWith(`${packageRoot}${sep}`)) throw new Error('DSH binary escaped package root')
     if (!(await exists(binaryPath))) throw new Error('Installed DSH binary does not exist')
+
+    if (this.bundledDirectory && resolvedDirectory === this.bundledDirectory) {
+      const runtime = JSON.parse(
+        await readFile(join(resolvedDirectory, 'runtime-manifest.json'), 'utf8')
+      ) as BundledRuntimeManifest
+      if (runtime.schema !== 1 || runtime.version !== expectedVersion) {
+        throw new Error('Bundled DSH runtime manifest is invalid')
+      }
+      if (runtime.binary?.replaceAll('/', sep) !== binaryPath.slice(resolvedDirectory.length + 1)) {
+        throw new Error('Bundled DSH runtime binary path does not match')
+      }
+      if (runtime.packageJsonSha256 !== sha256(manifestContent)) {
+        throw new Error('Bundled DSH package manifest checksum does not match')
+      }
+      if (runtime.binarySha256 !== sha256(await readFile(binaryPath))) {
+        throw new Error('Bundled DSH binary checksum does not match')
+      }
+    }
+
     return {
       selection: {
         version: expectedVersion,
-        directory: expectedDirectory,
+        directory: resolvedDirectory,
         installedAt: new Date().toISOString()
       },
       binaryPath
     }
+  }
+
+  public async validate(directory: string, expectedVersion: string): Promise<DshInstall> {
+    const resolvedDirectory = resolve(directory)
+    const managedDirectory = versionDirectory(this.paths, expectedVersion)
+    const isManaged = resolvedDirectory === managedDirectory
+    const isBundled = this.bundledDirectory !== null && resolvedDirectory === this.bundledDirectory
+    if (!isManaged && !isBundled) throw new Error('DSH selection is outside a trusted version store')
+    return await this.validateAt(resolvedDirectory, expectedVersion)
+  }
+
+  public async bundled(expectedVersion: string): Promise<DshInstall | null> {
+    if (!this.bundledDirectory) return null
+    return await this.validate(this.bundledDirectory, expectedVersion)
   }
 
   public async install(
@@ -112,16 +168,34 @@ export class DshPackageManager {
       throw new Error(result.stderr.trim() || `npm.cmd exited with ${String(result.exitCode)}`)
     }
 
-    await this.validate(stagingDirectory, version)
-    await mkdir(dirname(finalDirectory), { recursive: true })
-    await rename(stagingDirectory, finalDirectory)
+    const resolvedStaging = resolve(stagingDirectory)
+    if (!resolvedStaging.startsWith(`${resolve(this.paths.staging)}${sep}`)) {
+      throw new Error('DSH staging directory escaped its root')
+    }
+    try {
+      await this.validateAt(resolvedStaging, version)
+      await mkdir(dirname(finalDirectory), { recursive: true })
+      await rename(stagingDirectory, finalDirectory)
+    } catch (error) {
+      await rm(stagingDirectory, { recursive: true, force: true })
+      throw error
+    }
     return await this.validate(finalDirectory, version)
   }
 
   public async select(selection: DshSelection): Promise<void> {
     const validated = await this.validate(selection.directory, selection.version)
     const current = await this.current()
-    if (current) await writeJsonAtomic(this.paths.previousPointer, current)
+    if (current) {
+      try {
+        const healthyCurrent = await this.validate(current.directory, current.version)
+        if (healthyCurrent.selection.directory !== validated.selection.directory) {
+          await writeJsonAtomic(this.paths.previousPointer, healthyCurrent.selection)
+        }
+      } catch {
+        // Invalid pointers are replaced, not promoted to rollback state.
+      }
+    }
     await writeJsonAtomic(this.paths.currentPointer, validated.selection)
   }
 
