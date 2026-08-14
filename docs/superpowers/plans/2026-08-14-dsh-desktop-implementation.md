@@ -79,7 +79,7 @@ Node.js range to `^22.19.0 || >=24.0.0`.
 5. Add scripts:
    - `dev`: start electron-vite development mode;
    - `build`: build all Electron faces;
-   - `typecheck`: run `tsc -b --pretty false` across both TypeScript faces;
+   - `typecheck`: run `tsc --noEmit` separately across both TypeScript faces;
    - `test`: run Vitest once;
    - `test:watch`: run Vitest in watch mode;
    - `test:e2e`: run Playwright tests;
