@@ -15,6 +15,11 @@ export default defineConfig({
         input: {
           startup: resolve('src/preload/startup.ts'),
           shell: resolve('src/preload/shell.ts')
+        },
+        output: {
+          // Sandboxed renderers cannot run ESM preloads; emit CommonJS.
+          format: 'cjs',
+          entryFileNames: '[name].cjs'
         }
       }
     }

@@ -79,7 +79,7 @@ export class WindowController {
       show: false,
       backgroundColor: '#0b0d10',
       webPreferences: {
-        preload: join(__dirname, '../preload/startup.mjs'),
+        preload: join(__dirname, '../preload/startup.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true
@@ -129,7 +129,7 @@ export class WindowController {
   private createShellView(): WebContentsView {
     const view = new WebContentsView({
       webPreferences: {
-        preload: join(__dirname, '../preload/shell.mjs'),
+        preload: join(__dirname, '../preload/shell.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
