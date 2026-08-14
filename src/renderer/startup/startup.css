@@ -1,0 +1,106 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter, "Segoe UI Variable", "Microsoft YaHei UI", system-ui, sans-serif;
+  background: #0b0d10;
+  color: #f3f5f7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 50% 24%, rgb(42 89 230 / 20%), transparent 34rem),
+    #0b0d10;
+}
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.status-card {
+  width: min(520px, 100%);
+  padding: 42px;
+  border: 1px solid #2a303b;
+  border-radius: 18px;
+  background: rgb(18 21 27 / 92%);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 38%);
+}
+
+.mark {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 14px;
+  background: #2f65ef;
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: -0.04em;
+}
+
+.eyebrow {
+  margin: 30px 0 8px;
+  color: #7999ec;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(26px, 4vw, 36px);
+  letter-spacing: -0.035em;
+}
+
+#detail {
+  min-height: 24px;
+  margin: 14px 0 24px;
+  color: #aab2c0;
+}
+
+.progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #252a33;
+}
+
+.progress span {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: #5f87f5;
+  animation: progress 1.4s ease-in-out infinite alternate;
+}
+
+.meta {
+  margin: 16px 0 0;
+  color: #6f7784;
+  font-size: 12px;
+}
+
+@keyframes progress {
+  from {
+    transform: translateX(-24%);
+  }
+  to {
+    transform: translateX(188%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress span {
+    animation: none;
+    width: 100%;
+  }
+}

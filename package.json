@@ -1,0 +1,36 @@
+{
+  "name": "dsh-desktop",
+  "version": "0.1.0",
+  "description": "Windows desktop wrapper for DeepSeek Harness Web UI",
+  "type": "module",
+  "main": "out/main/app.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "update:serve": "tsx scripts/local-update-server.ts"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9",
+    "semver": "7.8.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.2.0",
+    "@types/semver": "7.8.0",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "png-to-ico": "3.0.2",
+    "sharp": "0.35.3",
+    "tsx": "4.22.4",
+    "typescript": "7.0.2",
+    "vite": "7.3.6",
+    "vitest": "4.1.10"
+  }
+}

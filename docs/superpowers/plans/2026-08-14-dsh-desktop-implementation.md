@@ -23,7 +23,7 @@ the versions inspected on 2026-08-14:
 | `electron-builder` | `26.15.3` | Windows NSIS packaging |
 | `electron-updater` | `6.8.9` | Desktop update client |
 | `typescript` | `7.0.2` | Type checking |
-| `vite` | `8.2.1` | Startup renderer build |
+| `vite` | `7.3.6` | Startup renderer build; latest release accepted by electron-vite 5 |
 | `vitest` | `4.1.10` | Unit and integration tests |
 | `@playwright/test` | `1.62.1` | Packaged UI smoke tests |
 | `semver` | `7.8.5` | Node, application, and DSH version rules |
