@@ -102,7 +102,8 @@ if (!hasSingleInstanceLock) {
       desktopUpdater,
       dshUpdater,
       packages,
-      logsDirectory: paths.logs
+      logsDirectory: paths.logs,
+      selectWorkspace: async (tab) => await windows.selectTab(tab)
     })
     registerIpc(paths)
     windows.createStartupWindow()

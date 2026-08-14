@@ -1,7 +1,12 @@
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, BrowserWindow, shell, WebContentsView } from 'electron'
-import { DEEPSEEK_CHAT_URL, DSH_URL, PRODUCT_NAME } from '../shared/config.js'
+import {
+  DEEPSEEK_CHAT_URL,
+  DEFAULT_WORKSPACE_TAB,
+  DSH_URL,
+  PRODUCT_NAME
+} from '../shared/config.js'
 import type { StartupStatus, WorkspaceTab, WorkspaceTabState } from '../shared/contracts.js'
 import {
   isAllowedDeepSeekNavigation,
@@ -9,14 +14,15 @@ import {
   isAllowedExternalUrl
 } from './navigation-policy.js'
 
-const TOOLBAR_HEIGHT = 48
+const TOOLBAR_HEIGHT = 54
 
 export class WindowController {
   private startupWindow: BrowserWindow | null = null
   private workspaceWindow: BrowserWindow | null = null
+  private shellView: WebContentsView | null = null
   private dshView: WebContentsView | null = null
   private deepseekView: WebContentsView | null = null
-  private activeTab: WorkspaceTab = 'dsh'
+  private activeTab: WorkspaceTab = DEFAULT_WORKSPACE_TAB
   private deepseekStarted = false
   private deepseekLoadTimer: NodeJS.Timeout | null = null
 
@@ -34,10 +40,10 @@ export class WindowController {
   }
 
   public isShellSender(senderId: number): boolean {
-    return this.workspaceWindow?.webContents.id === senderId
+    return this.shellView?.webContents.id === senderId
   }
 
-  private async loadRenderer(window: BrowserWindow, page: 'startup' | 'shell'): Promise<void> {
+  private async loadRenderer(window: BrowserWindow, page: 'startup'): Promise<void> {
     if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
       const base = process.env.ELECTRON_RENDERER_URL.endsWith('/')
         ? process.env.ELECTRON_RENDERER_URL
@@ -46,6 +52,17 @@ export class WindowController {
     } else {
       await window.loadFile(join(__dirname, `../renderer/${page}/index.html`))
     }
+  }
+
+  private async loadShellRenderer(view: WebContentsView): Promise<void> {
+    if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
+      const base = process.env.ELECTRON_RENDERER_URL.endsWith('/')
+        ? process.env.ELECTRON_RENDERER_URL
+        : `${process.env.ELECTRON_RENDERER_URL}/`
+      await view.webContents.loadURL(new URL('shell/index.html', base).toString())
+      return
+    }
+    await view.webContents.loadFile(join(__dirname, '../renderer/shell/index.html'))
   }
 
   public createStartupWindow(): BrowserWindow {
@@ -89,7 +106,7 @@ export class WindowController {
   private sendTabState(state: WorkspaceTabState): void {
     const window = this.workspaceWindow
     if (!window || window.isDestroyed()) return
-    window.webContents.send('shell:tab-state', state)
+    this.shellView?.webContents.send('shell:tab-state', state)
   }
 
   private layoutViews(): void {
@@ -98,9 +115,29 @@ export class WindowController {
     const size = window.getContentSize()
     const width = size[0] ?? 0
     const height = size[1] ?? 0
-    const bounds = { x: 0, y: TOOLBAR_HEIGHT, width, height: Math.max(0, height - TOOLBAR_HEIGHT) }
-    this.dshView?.setBounds(bounds)
-    this.deepseekView?.setBounds(bounds)
+    this.shellView?.setBounds({ x: 0, y: 0, width, height: TOOLBAR_HEIGHT })
+    const workspaceBounds = {
+      x: 0,
+      y: TOOLBAR_HEIGHT,
+      width,
+      height: Math.max(0, height - TOOLBAR_HEIGHT)
+    }
+    this.dshView?.setBounds(workspaceBounds)
+    this.deepseekView?.setBounds(workspaceBounds)
+  }
+
+  private createShellView(): WebContentsView {
+    const view = new WebContentsView({
+      webPreferences: {
+        preload: join(__dirname, '../preload/shell.mjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true
+      }
+    })
+    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    return view
   }
 
   private createDshView(): WebContentsView {
@@ -192,7 +229,7 @@ export class WindowController {
     this.dshView.setVisible(tab === 'dsh')
     this.deepseekView.setVisible(tab === 'deepseek')
     window.setTitle(tab === 'deepseek' ? `${PRODUCT_NAME} — DeepSeek 对话` : PRODUCT_NAME)
-    window.webContents.send('shell:tab-changed', tab)
+    this.shellView?.webContents.send('shell:tab-changed', tab)
     if (tab === 'deepseek') {
       this.startDeepSeek()
       this.deepseekView.webContents.focus()
@@ -222,7 +259,6 @@ export class WindowController {
       show: false,
       backgroundColor: '#111722',
       webPreferences: {
-        preload: join(__dirname, '../preload/shell.mjs'),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -230,11 +266,14 @@ export class WindowController {
       }
     })
     this.workspaceWindow = window
+    this.shellView = this.createShellView()
     this.dshView = this.createDshView()
     this.deepseekView = this.createDeepSeekView()
-    this.deepseekView.setVisible(false)
+    this.dshView.setVisible(DEFAULT_WORKSPACE_TAB === 'dsh')
+    this.deepseekView.setVisible(DEFAULT_WORKSPACE_TAB === 'deepseek')
     window.contentView.addChildView(this.dshView)
     window.contentView.addChildView(this.deepseekView)
+    window.contentView.addChildView(this.shellView)
     window.on('resize', () => this.layoutViews())
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.on('closed', () => {
@@ -245,12 +284,12 @@ export class WindowController {
     this.layoutViews()
 
     await Promise.all([
-      this.loadRenderer(window, 'shell'),
+      this.loadShellRenderer(this.shellView),
       this.dshView.webContents.loadURL(this.dshUrl)
     ])
     this.layoutViews()
+    await this.selectTab(DEFAULT_WORKSPACE_TAB)
     window.show()
-    window.webContents.send('shell:tab-changed', 'dsh')
     startup?.destroy()
     this.startupWindow = null
 
@@ -266,15 +305,16 @@ export class WindowController {
   }
 
   private closeViews(): void {
-    for (const view of [this.dshView, this.deepseekView]) {
+    for (const view of [this.shellView, this.dshView, this.deepseekView]) {
       if (view && !view.webContents.isDestroyed()) view.webContents.close()
     }
+    this.shellView = null
     this.dshView = null
     this.deepseekView = null
     if (this.deepseekLoadTimer) clearTimeout(this.deepseekLoadTimer)
     this.deepseekLoadTimer = null
     this.deepseekStarted = false
-    this.activeTab = 'dsh'
+    this.activeTab = DEFAULT_WORKSPACE_TAB
   }
 
   public showStartup(): BrowserWindow {

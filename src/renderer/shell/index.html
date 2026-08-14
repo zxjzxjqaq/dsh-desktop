@@ -17,16 +17,18 @@
         <span class="brand-name">Workspace</span>
       </div>
       <nav class="tabs" aria-label="工作区">
-        <button class="tab is-active" type="button" data-tab="dsh" aria-selected="true">
-          <span class="tab-dot dsh-dot" aria-hidden="true"></span>
-          DSH
-        </button>
-        <button class="tab" type="button" data-tab="deepseek" aria-selected="false">
+        <button class="tab is-active" type="button" data-tab="deepseek" aria-selected="true">
           <span class="tab-dot deepseek-dot" aria-hidden="true"></span>
-          DeepSeek 对话
+          DeepSeek 网页对话
+          <span class="tab-badge">官网</span>
+        </button>
+        <button class="tab" type="button" data-tab="dsh" aria-selected="false">
+          <span class="tab-dot dsh-dot" aria-hidden="true"></span>
+          DSH 工作区
+          <span class="tab-badge">本地</span>
         </button>
       </nav>
-      <div id="state" class="state" role="status">DSH 已连接</div>
+      <div id="state" class="state is-loading" role="status">正在连接 DeepSeek…</div>
     </header>
     <script type="module" src="./shell.ts"></script>
   </body>

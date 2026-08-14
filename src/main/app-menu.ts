@@ -2,6 +2,7 @@ import { app, dialog, Menu, type BrowserWindow, shell } from 'electron'
 import type { DesktopUpdater } from './app-updater.js'
 import type { DshUpdater } from './dsh-updater.js'
 import type { DshPackageManager } from './dsh-package-manager.js'
+import type { WorkspaceTab } from '../shared/contracts.js'
 
 export interface AppMenuOptions {
   readonly getWindow: () => BrowserWindow | null
@@ -9,6 +10,7 @@ export interface AppMenuOptions {
   readonly dshUpdater: DshUpdater
   readonly packages: DshPackageManager
   readonly logsDirectory: string
+  readonly selectWorkspace: (tab: WorkspaceTab) => Promise<void>
 }
 
 async function message(window: BrowserWindow | null, options: Electron.MessageBoxOptions): Promise<number> {
@@ -21,6 +23,21 @@ export function installAppMenu(options: AppMenuOptions): void {
     {
       label: '文件',
       submenu: [{ role: 'quit', label: '退出' }]
+    },
+    {
+      label: '导航',
+      submenu: [
+        {
+          label: 'DeepSeek 网页对话',
+          accelerator: 'CmdOrCtrl+1',
+          click: () => void options.selectWorkspace('deepseek')
+        },
+        {
+          label: 'DSH 工作区',
+          accelerator: 'CmdOrCtrl+2',
+          click: () => void options.selectWorkspace('dsh')
+        }
+      ]
     },
     {
       label: '帮助',

@@ -18,7 +18,7 @@ body {
 }
 
 .workspace-bar {
-  height: 48px;
+  height: 54px;
   display: grid;
   grid-template-columns: 190px 1fr minmax(140px, auto);
   align-items: center;
@@ -114,6 +114,21 @@ body {
   width: 7px;
   height: 7px;
   border-radius: 50%;
+}
+
+.tab-badge {
+  padding: 1px 5px 2px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 999px;
+  color: #8e9ab0;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.tab.is-active .tab-badge {
+  border-color: rgb(103 213 196 / 30%);
+  color: #a9e9df;
 }
 
 .dsh-dot {
