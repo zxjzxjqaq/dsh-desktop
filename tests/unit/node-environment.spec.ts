@@ -21,7 +21,10 @@ describe('Node environment detection', () => {
       'where.exe node': { code: 0, stdout: 'C:\\Node\\node.exe\r\n' },
       'C:\\Node\\node.exe --version': { code: 0, stdout: 'v24.15.0\n' },
       'where.exe npm.cmd': { code: 0, stdout: 'C:\\Node\\npm.cmd\r\n' },
-      'C:\\Node\\npm.cmd --version': { code: 0, stdout: '11.14.1\n' }
+      'C:\\Node\\node.exe C:\\Node\\node_modules\\npm\\bin\\npm-cli.js --version': {
+        code: 0,
+        stdout: '11.14.1\n'
+      }
     })
     await expect(detectNodeEnvironment(runner)).resolves.toMatchObject({
       ok: true,

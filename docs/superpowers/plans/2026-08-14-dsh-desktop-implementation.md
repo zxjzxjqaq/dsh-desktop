@@ -1,5 +1,12 @@
 # DSH Desktop for Windows Implementation Plan
 
+> Implementation note (2026-08-14): on the verified Windows/Node 24 runtime,
+> direct `child_process.spawn()` of `npm.cmd` returned `EINVAL`. The completed
+> implementation still discovers npm with `where.exe npm.cmd`, then invokes the
+> adjacent `node_modules/npm/bin/npm-cli.js` through the validated `node.exe`.
+> This note supersedes the direct-`npm.cmd` runtime calls described below; shell
+> verification commands continue to use `npm.cmd`.
+
 ## Objective
 
 Implement the approved DSH Desktop design as a Windows x64 Electron application

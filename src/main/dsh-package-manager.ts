@@ -6,6 +6,7 @@ import type { AppPaths } from './platform/app-paths.js'
 import { versionDirectory } from './platform/app-paths.js'
 import { readJson, writeJsonAtomic } from './platform/atomic-json.js'
 import { runProcess, type ProcessRunner } from './platform/process-runner.js'
+import type { ValidNodeEnvironment } from './node-environment.js'
 
 export interface DshSelection {
   readonly version: string
@@ -53,7 +54,9 @@ export class DshPackageManager {
     if (semver.valid(expectedVersion) !== expectedVersion) {
       throw new Error(`Invalid DSH version: ${expectedVersion}`)
     }
-    const packageRoot = resolve(directory, 'node_modules', '@deepseek-ai', 'dsh')
+    const expectedDirectory = versionDirectory(this.paths, expectedVersion)
+    if (resolve(directory) !== expectedDirectory) throw new Error('DSH selection is outside the managed version store')
+    const packageRoot = resolve(expectedDirectory, 'node_modules', '@deepseek-ai', 'dsh')
     const manifestPath = join(packageRoot, 'package.json')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as DshManifest
     if (manifest.name !== '@deepseek-ai/dsh') throw new Error('Installed package name is not @deepseek-ai/dsh')
@@ -66,23 +69,33 @@ export class DshPackageManager {
     return {
       selection: {
         version: expectedVersion,
-        directory: resolve(directory),
+        directory: expectedDirectory,
         installedAt: new Date().toISOString()
       },
       binaryPath
     }
   }
 
-  public async install(npmPath: string, version: string): Promise<DshInstall> {
+  public async install(
+    environment: Pick<ValidNodeEnvironment, 'nodePath' | 'npmCliPath'>,
+    version: string
+  ): Promise<DshInstall> {
     const finalDirectory = versionDirectory(this.paths, version)
-    if (await exists(finalDirectory)) return await this.validate(finalDirectory, version)
+    if (await exists(finalDirectory)) {
+      try {
+        return await this.validate(finalDirectory, version)
+      } catch {
+        await rm(finalDirectory, { recursive: true, force: true })
+      }
+    }
 
     await mkdir(this.paths.staging, { recursive: true })
     const stagingDirectory = join(this.paths.staging, `${version}-${randomUUID()}`)
     await mkdir(stagingDirectory, { recursive: true })
     const result = await this.runner(
-      npmPath,
+      environment.nodePath,
       [
+        environment.npmCliPath,
         'install',
         '--prefix',
         stagingDirectory,

@@ -16,7 +16,8 @@ the previous release when the new service fails its health check.
 
 - Provide a Windows x64 installer and a normal desktop application experience.
 - Preserve the upstream DSH Web UI instead of maintaining a fork.
-- Use the system `node.exe` and `npm.cmd`; do not bundle Node.js for DSH.
+- Use the system `node.exe` and the npm distribution discovered from `npm.cmd`;
+  do not bundle Node.js for DSH.
 - Start DSH automatically and show useful progress before loading its Web UI.
 - Stop the complete DSH process tree when the application window closes.
 - Update the desktop application and DSH through independent workflows.
@@ -59,7 +60,7 @@ flowchart TD
     Main --> Service["DSH service manager"]
     Main --> AppUpdate["Desktop updater"]
     Main --> Logs["Redacting logger"]
-    Node --> System["System node.exe and npm.cmd"]
+Node --> System["System node.exe and npm-cli.js"]
     Packages --> Versions["Per-user DSH version store"]
     Service --> DSH["DSH child process"]
     DSH --> Loopback["127.0.0.1:3080"]
@@ -102,9 +103,11 @@ to DSH Web content.
 ### 5.3 Node Environment Detector
 
 The detector resolves executables with `where.exe node` and
-`where.exe npm.cmd`, then runs `node --version` and `npm.cmd --version` without a
-shell. It never invokes `npm` through PowerShell because PowerShell can select
-`npm.ps1`, which may be blocked by the user's execution policy.
+`where.exe npm.cmd`, derives the adjacent `node_modules/npm/bin/npm-cli.js`, then
+runs `node --version` and `node npm-cli.js --version` without a shell. It never
+invokes `npm` through PowerShell because PowerShell can select `npm.ps1`, which
+may be blocked by the user's execution policy. Executing the JavaScript CLI via
+the validated `node.exe` also avoids Windows `.cmd` spawning differences.
 
 The first release accepts Node.js `^22.19.0 || >=24.0.0`, matching the current
 upstream DSH repository. The check is kept in one configuration constant so a
@@ -132,10 +135,10 @@ DSH releases are installed under the current user's local application data:
 └─ previous.json
 ```
 
-The package manager invokes the resolved `npm.cmd` directly:
+The package manager invokes the resolved npm CLI through the validated Node:
 
 ```powershell
-npm.cmd install --prefix <staging-directory> --omit=dev --no-audit --no-fund --save-exact @deepseek-ai/dsh@<version>
+node.exe <npm-cli.js> install --prefix <staging-directory> --omit=dev --no-audit --no-fund --save-exact @deepseek-ai/dsh@<version>
 ```
 
 The values represented above are constructed as separate process arguments,
@@ -246,7 +249,7 @@ introduced.
 
 ## 8. DSH Update and Rollback
 
-The DSH updater checks `npm.cmd view @deepseek-ai/dsh dist-tags --json`. Because
+The DSH updater checks `node.exe <npm-cli.js> view @deepseek-ai/dsh dist-tags --json`. Because
 DSH is currently a developer preview, discovery is automatic but installation
 always requires user confirmation in the first desktop release.
 
@@ -347,7 +350,7 @@ argument names but omits the inherited environment.
 | --- | --- |
 | Node.js missing | Show installation guidance, open the official download page on request, and allow retry. |
 | Node.js incompatible | Show detected and required versions and allow retry after replacement. |
-| `npm.cmd` missing | Report an incomplete Node.js installation and allow retry. |
+| `npm.cmd` or its adjacent `npm-cli.js` missing | Report an incomplete Node.js installation and allow retry. |
 | DSH install failure | Preserve the current release, show a short error, and link the complete redacted log. |
 | Port 3080 occupied | Do not load the listener; show the PID when discoverable and allow retry. |
 | DSH startup timeout | Terminate its process tree, preserve logs, and allow retry. |
@@ -415,7 +418,7 @@ checks, filesystem writes, and update providers independently.
 
 ### 14.2 Integration Tests
 
-- mocked `node.exe` and `npm.cmd` processes with literal exit statuses;
+- mocked `node.exe`, `npm.cmd` discovery, and `npm-cli.js` processes with literal exit statuses;
 - staged DSH installation success and failure;
 - service startup, output capture, timeout, crash, and process-tree cleanup;
 - an unrelated loopback server occupying port 3080;
@@ -443,7 +446,7 @@ The first release is complete when all of the following are demonstrated on
 Windows x64:
 
 - the per-user installer succeeds without elevation;
-- the application reliably detects system Node.js and `npm.cmd`;
+- the application reliably detects system Node.js and its npm CLI;
 - a first launch installs a pinned DSH package and shows its Web UI;
 - environment, package, port, and startup failures produce actionable states;
 - closing the application leaves no DSH descendant process or port listener;

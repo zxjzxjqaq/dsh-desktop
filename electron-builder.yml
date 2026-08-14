@@ -1,0 +1,30 @@
+appId: com.dsh.desktop
+productName: DSH Desktop
+copyright: Copyright (c) 2026 DSH Desktop contributors
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+asar: true
+npmRebuild: false
+removePackageScripts: true
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: DSH-Desktop-${version}-Setup.${ext}
+nsis:
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: DSH Desktop
+publish:
+  provider: generic
+  url: http://127.0.0.1:45873/
+generateUpdatesFilesForAllChannels: true

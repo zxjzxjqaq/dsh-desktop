@@ -1,4 +1,5 @@
 import semver from 'semver'
+import { dirname, join } from 'node:path'
 import { NODE_VERSION_RANGE } from '../shared/config.js'
 import { runProcess, type ProcessRunner } from './platform/process-runner.js'
 
@@ -6,6 +7,7 @@ export interface ValidNodeEnvironment {
   readonly ok: true
   readonly nodePath: string
   readonly npmPath: string
+  readonly npmCliPath: string
   readonly nodeVersion: string
   readonly npmVersion: string
 }
@@ -55,10 +57,11 @@ export async function detectNodeEnvironment(
 
     const npmPaths = await locate('npm.cmd', runner)
     for (const npmPath of npmPaths) {
-      const npmResult = await runner(npmPath, ['--version'], { timeoutMs: 5_000 })
+      const npmCliPath = join(dirname(npmPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+      const npmResult = await runner(nodePath, [npmCliPath, '--version'], { timeoutMs: 5_000 })
       const npmVersion = semver.clean(npmResult.stdout.trim())
       if (npmResult.exitCode === 0 && npmVersion) {
-        return { ok: true, nodePath, npmPath, nodeVersion: version, npmVersion }
+        return { ok: true, nodePath, npmPath, npmCliPath, nodeVersion: version, npmVersion }
       }
     }
     return { ok: false, reason: 'npm-missing', detail: 'Node.js 可用，但未找到可执行的 npm.cmd。' }

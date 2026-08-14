@@ -1,39 +1,66 @@
 import { join } from 'node:path'
-import { app, BrowserWindow } from 'electron'
-import { PRODUCT_NAME } from '../shared/config.js'
+import { app, ipcMain, shell } from 'electron'
+import { DSH_HOST, DSH_PORT, INITIAL_DSH_VERSION, PRODUCT_NAME } from '../shared/config.js'
+import type { StartupAction } from '../shared/contracts.js'
+import { installAppMenu } from './app-menu.js'
+import { DesktopUpdater } from './app-updater.js'
+import { DshPackageManager } from './dsh-package-manager.js'
+import { DshUpdater } from './dsh-updater.js'
+import { FileLogger } from './logging.js'
+import { createAppPaths } from './platform/app-paths.js'
+import { StartupOrchestrator } from './startup-orchestrator.js'
+import { UpdateLock } from './update-lock.js'
+import { WindowController } from './window-controller.js'
 
-let mainWindow: BrowserWindow | null = null
+app.setName(PRODUCT_NAME)
+const localAppData = process.env.LOCALAPPDATA ?? app.getPath('appData')
+const testMode = process.env.DSH_DESKTOP_TEST_MODE === '1'
+const configuredDataRoot = testMode ? process.env.DSH_DESKTOP_DATA_ROOT : undefined
+app.setPath('userData', configuredDataRoot ? join(configuredDataRoot) : join(localAppData, PRODUCT_NAME))
+const configuredPort = testMode ? Number(process.env.DSH_DESKTOP_PORT ?? DSH_PORT) : DSH_PORT
+if (!Number.isInteger(configuredPort) || configuredPort < 1 || configuredPort > 65_535) {
+  throw new Error('Invalid DSH_DESKTOP_PORT')
+}
+const dshUrl = `http://${DSH_HOST}:${configuredPort}`
 
-function createWindow(): BrowserWindow {
-  const window = new BrowserWindow({
-    title: PRODUCT_NAME,
-    width: 1180,
-    height: 780,
-    minWidth: 760,
-    minHeight: 560,
-    show: false,
-    backgroundColor: '#0b0d10',
-    webPreferences: {
-      preload: join(__dirname, '../preload/startup.mjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
+const windows = new WindowController(dshUrl)
+let orchestrator: StartupOrchestrator | null = null
+let quitting = false
+
+function verifySender(senderId: number): void {
+  if (!windows.isStartupSender(senderId)) throw new Error('Rejected IPC sender')
+}
+
+function registerIpc(paths: ReturnType<typeof createAppPaths>): void {
+  ipcMain.handle('startup:get-versions', (event) => {
+    verifySender(event.sender.id)
+    const versions = orchestrator?.versions
+    return {
+      app: app.getVersion(),
+      dsh: versions?.dsh ?? null,
+      node: versions?.node ?? null,
+      npm: versions?.npm ?? null
     }
   })
-
-  window.once('ready-to-show', () => window.show())
-
-  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'))
-  }
-
-  window.on('closed', () => {
-    mainWindow = null
+  ipcMain.handle('startup:action', async (event, action: StartupAction) => {
+    verifySender(event.sender.id)
+    switch (action) {
+      case 'retry':
+        await orchestrator?.run()
+        return
+      case 'open-node-download':
+        await shell.openExternal('https://nodejs.org/en/download')
+        return
+      case 'open-logs':
+        await shell.openPath(paths.logs)
+        return
+      case 'exit':
+        app.quit()
+        return
+      default:
+        throw new Error('Unknown startup action')
+    }
   })
-
-  return window
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -41,14 +68,50 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
+  app.on('second-instance', () => windows.focus())
+
+  void app.whenReady().then(async () => {
+    const paths = createAppPaths(app.getPath('userData'))
+    const logger = new FileLogger(paths.logs)
+    await logger.prune()
+    const packages = new DshPackageManager(paths)
+    orchestrator = new StartupOrchestrator(windows, packages, logger, dshUrl)
+    const updateLock = new UpdateLock()
+    const desktopUpdater = new DesktopUpdater(
+      updateLock,
+      logger,
+      () => windows.activeWindow,
+      async () => await orchestrator?.stop()
+    )
+    const dshUpdater = new DshUpdater(packages, orchestrator, updateLock, logger)
+    installAppMenu({
+      getWindow: () => windows.activeWindow,
+      desktopUpdater,
+      dshUpdater,
+      packages,
+      logsDirectory: paths.logs
+    })
+    registerIpc(paths)
+    windows.createStartupWindow()
+    await logger.write('desktop', `Starting ${PRODUCT_NAME} ${app.getVersion()}, pinned DSH ${INITIAL_DSH_VERSION}`)
+    const ready = await orchestrator.run()
+    const autoExitMs = testMode ? Number(process.env.DSH_DESKTOP_AUTO_EXIT_MS ?? 0) : 0
+    if (ready && Number.isFinite(autoExitMs) && autoExitMs > 0) {
+      setTimeout(() => app.quit(), autoExitMs)
+    }
   })
 
-  void app.whenReady().then(() => {
-    mainWindow = createWindow()
+  app.on('before-quit', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    quitting = true
+    const stop = orchestrator?.stop() ?? Promise.resolve()
+    void stop
+      .catch(() => undefined)
+      .finally(() => {
+        windows.destroyAll()
+        app.quit()
+      })
   })
 
   app.on('window-all-closed', () => app.quit())

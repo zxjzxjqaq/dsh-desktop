@@ -1,6 +1,9 @@
-interface Window {
-  readonly dshDesktop: {
-    readonly productName: string
-    readonly platform: string
+import type { StartupBridge } from '../../shared/contracts.js'
+
+declare global {
+  interface Window {
+    readonly dshDesktop: StartupBridge
   }
 }
+
+export {}
