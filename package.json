@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Windows desktop wrapper for DeepSeek Harness Web UI",
   "author": "DSH Desktop contributors",
   "repository": {
@@ -26,6 +26,7 @@
     "release:github": "npm run prepare:node-runtime && npm run prepare:dsh-runtime && npm run build:icon && npm run build && electron-builder --win nsis --x64 --publish always",
     "update:serve": "tsx scripts/local-update-server.ts",
     "verify:real-dsh": "tsx scripts/verify-real-dsh.ts",
+    "verify:bundled-node": "npm run prepare:node-runtime && npm run prepare:dsh-runtime && tsx scripts/verify-bundled-node.ts",
     "verify:update-feed": "tsx scripts/verify-update-feed.ts",
     "verify:desktop-update": "node node_modules/electron/cli.js scripts/updater-fixture"
   },
