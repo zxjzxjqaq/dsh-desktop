@@ -36,9 +36,9 @@ describe('tray menu template', () => {
     }
     const template = buildTrayMenuTemplate(options)
     const byLabel = new Map(template.map((item) => [item.label, item]))
-    await byLabel.get('显示 DSH 工作区')!.click!({} as never, {} as never)
-    await byLabel.get('打开日志目录')!.click!({} as never, {} as never)
-    byLabel.get('退出')!.click!({} as never, {} as never)
+    await byLabel.get('显示 DSH 工作区')!.click!({} as never, {} as never, {} as never)
+    await byLabel.get('打开日志目录')!.click!({} as never, {} as never, {} as never)
+    byLabel.get('退出')!.click!({} as never, {} as never, {} as never)
     expect(calls).toEqual(['select:dsh', 'logs', 'quit'])
   })
 
