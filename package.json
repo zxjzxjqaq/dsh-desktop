@@ -23,7 +23,7 @@
     "prepare:node-runtime": "tsx scripts/prepare-node-runtime.ts",
     "prepare:dsh-runtime": "tsx scripts/prepare-bundled-dsh.ts",
     "dist:win": "npm run prepare:node-runtime && npm run prepare:dsh-runtime && npm run build:icon && npm run build && electron-builder --win nsis --x64",
-    "release:github": "npm run prepare:node-runtime && npm run prepare:dsh-runtime && npm run build:icon && npm run build && electron-builder --win nsis --x64 --publish always",
+    "release:github": "npm run prepare:node-runtime && npm run prepare:dsh-runtime && npm run build:icon && npm run build && electron-builder --win nsis --x64 --publish never",
     "update:serve": "tsx scripts/local-update-server.ts",
     "verify:real-dsh": "tsx scripts/verify-real-dsh.ts",
     "verify:bundled-node": "npm run prepare:node-runtime && npm run prepare:dsh-runtime && tsx scripts/verify-bundled-node.ts",
