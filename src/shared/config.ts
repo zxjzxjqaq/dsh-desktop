@@ -8,6 +8,8 @@ export const DSH_URL = `http://${DSH_HOST}:${DSH_PORT}`
 export const DEEPSEEK_CHAT_URL = 'https://chat.deepseek.com/'
 export const DEFAULT_WORKSPACE_TAB: WorkspaceTab = 'deepseek'
 export const INITIAL_DSH_VERSION = '0.1.0-rc.6'
+export const BUNDLED_NODE_VERSION = '24.15.0'
+export const RUNTIME_ARCHIVE_SCHEMA = 1
 export const NODE_VERSION_RANGE = '^22.19.0 || >=24.0.0'
 export const DSH_STARTUP_TIMEOUT_MS = 30_000
 export const DSH_SHUTDOWN_TIMEOUT_MS = 5_000

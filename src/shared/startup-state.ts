@@ -1,6 +1,7 @@
 import type { StartupPhase, StartupStatus } from './contracts.js'
 
 const TRANSITIONS: Readonly<Record<StartupPhase, readonly StartupPhase[]>> = {
+  'preparing-runtime': ['checking-node', 'environment-error'],
   'checking-node': ['preparing-dsh', 'environment-error'],
   'preparing-dsh': ['starting-dsh', 'package-error'],
   'starting-dsh': ['waiting-for-health', 'service-error'],

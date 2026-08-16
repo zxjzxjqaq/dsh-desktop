@@ -6,6 +6,7 @@ describe('application paths', () => {
     const paths = createAppPaths('C:\\用户目录\\DSH Desktop Data')
     expect(paths.logs).toContain('用户目录')
     expect(versionDirectory(paths, '0.1.0-rc.6')).toContain('0.1.0-rc.6')
+    expect(paths.nodeRuntimes).toBe('C:\\用户目录\\DSH Desktop Data\\dsh\\node')
   })
 
   it('rejects unsafe version values', () => {

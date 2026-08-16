@@ -4,6 +4,7 @@ import semver from 'semver'
 export interface AppPaths {
   readonly root: string
   readonly versions: string
+  readonly nodeRuntimes: string
   readonly staging: string
   readonly currentPointer: string
   readonly previousPointer: string
@@ -17,6 +18,7 @@ export function createAppPaths(userData: string): AppPaths {
   return {
     root,
     versions: join(dsh, 'versions'),
+    nodeRuntimes: join(dsh, 'node'),
     staging: join(dsh, 'staging'),
     currentPointer: join(dsh, 'current.json'),
     previousPointer: join(dsh, 'previous.json'),

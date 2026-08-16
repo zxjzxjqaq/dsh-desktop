@@ -16,6 +16,7 @@ export interface StartupBridge {
 }
 
 export type StartupPhase =
+  | 'preparing-runtime'
   | 'checking-node'
   | 'preparing-dsh'
   | 'starting-dsh'
