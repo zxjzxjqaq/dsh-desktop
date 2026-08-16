@@ -84,9 +84,7 @@ if (!hasSingleInstanceLock) {
     const logger = new FileLogger(paths.logs)
     await logger.prune()
     const packages = new DshPackageManager(paths, {
-      bundledDirectory: app.isPackaged
-        ? join(process.resourcesPath, 'dsh-runtime', INITIAL_DSH_VERSION)
-        : undefined
+      extractor: null
     })
     orchestrator = new StartupOrchestrator(windows, packages, logger, dshUrl)
     const updateLock = new UpdateLock()

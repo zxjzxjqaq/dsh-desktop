@@ -90,7 +90,7 @@ export class StartupOrchestrator {
       }
       if (!install) {
         try {
-          install = await this.packages.bundled(INITIAL_DSH_VERSION)
+          install = await this.packages.restoreBundled(INITIAL_DSH_VERSION)
         } catch (error) {
           await this.logger.write('desktop', `Bundled DSH is unavailable; using network fallback: ${String(error)}`)
         }
