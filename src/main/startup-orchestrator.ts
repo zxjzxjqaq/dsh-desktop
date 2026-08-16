@@ -4,6 +4,7 @@ import type { DshPackageManager } from './dsh-package-manager.js'
 import { DshServiceManager } from './dsh-service-manager.js'
 import type { FileLogger } from './logging.js'
 import { detectNodeEnvironment, type ValidNodeEnvironment } from './node-environment.js'
+import type { RuntimeExtractor } from './runtime-extractor.js'
 import type { WindowController } from './window-controller.js'
 
 function status(
@@ -27,17 +28,20 @@ export class StartupOrchestrator {
     private readonly windows: WindowController,
     private readonly packages: DshPackageManager,
     private readonly logger: FileLogger,
-    private readonly dshUrl = 'http://127.0.0.1:3080'
+    private readonly dshUrl = 'http://127.0.0.1:3080',
+    private readonly extractor: RuntimeExtractor | null = null
   ) {}
 
   public get versions(): {
     readonly dsh: string | null
     readonly node: string | null
+    readonly nodeSource: 'bundled' | 'system' | null
     readonly npm: string | null
   } {
     return {
       dsh: this.activeDshVersion,
       node: this.environment?.nodeVersion ?? null,
+      nodeSource: this.environment?.source ?? null,
       npm: this.environment?.npmVersion ?? null
     }
   }
@@ -53,9 +57,23 @@ export class StartupOrchestrator {
   private async runOnce(): Promise<boolean> {
     const startupStartedAt = Date.now()
     this.windows.sendStatus(
+      status('preparing-runtime', '正在准备运行环境', '正在准备 Node.js 运行环境…')
+    )
+    let bundledNodeDirectory: string | null = null
+    if (this.extractor) {
+      try {
+        bundledNodeDirectory = await this.extractor.nodeRuntimeDirectory()
+        if (bundledNodeDirectory) {
+          await this.logger.write('desktop', `Bundled Node runtime ready at ${bundledNodeDirectory}`)
+        }
+      } catch (error) {
+        await this.logger.write('desktop', `Bundled Node runtime unavailable: ${String(error)}`)
+      }
+    }
+    this.windows.sendStatus(
       status('checking-node', '正在检测 Node.js', `需要 Node.js ${NODE_VERSION_RANGE}`)
     )
-    const environment = await detectNodeEnvironment()
+    const environment = await detectNodeEnvironment(undefined, bundledNodeDirectory)
     if (!environment.ok) {
       await this.logger.write('desktop', `Node environment error: ${environment.reason} ${environment.detail}`)
       this.windows.sendStatus(
@@ -69,7 +87,10 @@ export class StartupOrchestrator {
       return false
     }
     this.environment = environment
-    await this.logger.write('desktop', `Node environment ready in ${Date.now() - startupStartedAt}ms`)
+    await this.logger.write(
+      'desktop',
+      `Node environment ready in ${Date.now() - startupStartedAt}ms (source: ${environment.source}, ${environment.nodeVersion})`
+    )
 
     this.windows.sendStatus(
       status(

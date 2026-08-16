@@ -8,6 +8,7 @@ import { DshPackageManager } from './dsh-package-manager.js'
 import { DshUpdater } from './dsh-updater.js'
 import { FileLogger } from './logging.js'
 import { createAppPaths } from './platform/app-paths.js'
+import { RuntimeExtractor } from './runtime-extractor.js'
 import { StartupOrchestrator } from './startup-orchestrator.js'
 import { UpdateLock } from './update-lock.js'
 import { WindowController } from './window-controller.js'
@@ -43,6 +44,7 @@ function registerIpc(paths: ReturnType<typeof createAppPaths>): void {
       app: app.getVersion(),
       dsh: versions?.dsh ?? null,
       node: versions?.node ?? null,
+      nodeSource: versions?.nodeSource ?? null,
       npm: versions?.npm ?? null
     }
   })
@@ -83,10 +85,13 @@ if (!hasSingleInstanceLock) {
     const paths = createAppPaths(app.getPath('userData'))
     const logger = new FileLogger(paths.logs)
     await logger.prune()
+    const extractor = app.isPackaged
+      ? new RuntimeExtractor(paths, { resourcesDirectory: process.resourcesPath, logger })
+      : null
     const packages = new DshPackageManager(paths, {
-      extractor: null
+      extractor
     })
-    orchestrator = new StartupOrchestrator(windows, packages, logger, dshUrl)
+    orchestrator = new StartupOrchestrator(windows, packages, logger, dshUrl, extractor)
     const updateLock = new UpdateLock()
     const desktopUpdater = new DesktopUpdater(
       updateLock,

@@ -4,6 +4,7 @@ export interface DesktopVersions {
   readonly app: string
   readonly dsh: string | null
   readonly node: string | null
+  readonly nodeSource: 'bundled' | 'system' | null
   readonly npm: string | null
 }
 
