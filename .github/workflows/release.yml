@@ -34,3 +34,14 @@ jobs:
         run: npm run release:github
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mark the release with the product design document
+        shell: bash
+        run: |
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --notes-file docs/superpowers/specs/2026-08-16-dsh-desktop-v0.2-design.md
+          gh release upload "$GITHUB_REF_NAME" \
+            docs/superpowers/specs/2026-08-16-dsh-desktop-v0.2-design.md \
+            --repo "$GITHUB_REPOSITORY" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
