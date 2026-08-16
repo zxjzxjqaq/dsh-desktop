@@ -10,6 +10,7 @@ import { FileLogger } from './logging.js'
 import { createAppPaths } from './platform/app-paths.js'
 import { RuntimeExtractor } from './runtime-extractor.js'
 import { StartupOrchestrator } from './startup-orchestrator.js'
+import { isTrayModeEnabled, TrayController } from './tray-controller.js'
 import { UpdateLock } from './update-lock.js'
 import { WindowController } from './window-controller.js'
 
@@ -110,6 +111,22 @@ if (!hasSingleInstanceLock) {
     })
     registerIpc(paths)
     windows.createStartupWindow()
+    const tray = new TrayController({
+      iconPath: app.isPackaged
+        ? join(process.resourcesPath, 'icon.ico')
+        : join(app.getAppPath(), 'build', 'icon.ico'),
+      getWindow: () => windows.activeWindow,
+      selectWorkspace: async (tab) => {
+        windows.focus()
+        await windows.selectTab(tab)
+      },
+      openLogsDirectory: async () => {
+        await shell.openPath(paths.logs)
+      },
+      onQuit: () => app.quit()
+    })
+    tray.create()
+    windows.setCloseBehavior(() => tray.enabled, () => tray.onWindowHidden())
     await logger.write('desktop', `Starting ${PRODUCT_NAME} ${app.getVersion()}, pinned DSH ${INITIAL_DSH_VERSION}`)
     const ready = await orchestrator.run()
     const autoExitMs = testMode ? Number(process.env.DSH_DESKTOP_AUTO_EXIT_MS ?? 0) : 0
@@ -141,5 +158,7 @@ if (!hasSingleInstanceLock) {
       })
   })
 
-  app.on('window-all-closed', () => app.quit())
+  app.on('window-all-closed', () => {
+    if (!isTrayModeEnabled()) app.quit()
+  })
 }

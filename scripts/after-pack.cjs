@@ -25,5 +25,6 @@ exports.default = async function afterPack(context) {
     `${JSON.stringify(archivesManifest, null, 2)}\n`,
     'utf8'
   )
+  await cp(resolve('build', 'icon.ico'), join(resources, 'icon.ico'), { force: true })
   process.stdout.write(`Bundled runtime archives copied: ${copied.join(', ')}\n`)
 }
