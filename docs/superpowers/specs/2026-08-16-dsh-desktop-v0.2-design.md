@@ -13,9 +13,12 @@ latency.
 ## 2. Goals
 
 - Every user can run the app after installation without installing Node.js.
-- First launch reaches the DSH Web UI without any network install.
-- Faster startup: cold start to a usable DSH workspace in under ~5 seconds on a
-  local machine; warm starts under ~3 seconds.
+- The installer stays fast: bundled runtimes ship as single-file archives so
+  NSIS writes only a handful of large files instead of ~45,000 small ones.
+- First launch reaches the DSH Web UI without any network install; the one-time
+  runtime extraction shows progress in the startup window. After extraction,
+  cold start reaches a usable DSH workspace in under ~5 seconds on a local
+  machine; warm starts under ~3 seconds.
 - Users choose the installation directory during setup.
 - Closing the window hides the app to the system tray and keeps DSH running;
   quitting happens only through the tray context menu, which stops the complete
@@ -66,27 +69,47 @@ flowchart TD
 - `scripts/prepare-node-runtime.ts` (new): downloads
   `node-v24.15.0-win-x64.zip` from nodejs.org into `.artifacts/node-runtime/`,
   verifies its SHA256 against the official `SHASUMS256.txt` from the same
-  release directory, extracts it, and writes a `runtime-manifest.json`
-  (schema 1, version, sha256 of node.exe, npm-cli.js path). Reuses the same
-  idempotent pattern as `prepare-bundled-dsh.ts`.
-- `scripts/after-pack.cjs` copies `.artifacts/node-runtime/<version>` into
-  `resources/node-runtime/` inside the packaged app, outside the asar.
+  release directory, extracts it, and repackages it as a single
+  `node-runtime-<version>.tar.gz` archive. Reuses the same idempotent pattern
+  as `prepare-bundled-dsh.ts`.
+- `scripts/prepare-bundled-dsh.ts` additionally emits
+  `dsh-runtime-<version>.tar.gz` (single archive of the bundled DSH runtime)
+  next to its extracted copy.
+- `scripts/after-pack.cjs` copies only the two `.tar.gz` archives plus a
+  `runtime-manifest.json` (schema 1, version, archive sha256, entries count)
+  into `resources/` inside the packaged app, outside the asar. NSIS therefore
+  writes a handful of large files instead of ~45,000 small ones.
+- A new `src/main/platform/tar-extract.ts` module implements a minimal,
+  dependency-free tar.gz extractor (Node `node:zlib` + tar header parsing)
+  with path-traversal rejection. Build scripts create the archives with the
+  Windows-bundled `tar.exe` (`tar -czf`), so no archive library is needed.
+- First launch extracts each archive into the per-user data directory:
+  - `dsh/node/<version>/` for the Node runtime,
+  - `dsh/versions/<version>/` for the DSH runtime (reuses the existing version
+    store and `current.json` pointer machinery).
+  Extraction writes a `runtime-manifest.json` (schema 1, version, source
+  archive sha256) and is skipped when a matching valid manifest already
+  exists. Extraction failures are logged, the partial directory removed, and
+  the fallback path (system Node, network install) is used.
 - Node detection order in `node-environment.ts`:
-  1. Bundled runtime (`process.resourcesPath/node-runtime` when packaged,
-     `.artifacts/node-runtime` in dev when present, else skipped);
+  1. Extracted bundled runtime (`dsh/node/<version>` with valid manifest);
   2. System Node.js via `where.exe` (existing logic, unchanged).
 - The returned `ValidNodeEnvironment` gains a `source: 'bundled' | 'system'`
   field so logs and the About dialog can show where Node came from.
 - DSH updates keep using npm (`npm view`, `npm install`) but resolve
   `npmCliPath` from the same environment object, so a bundled Node supplies
   its own npm.
+- The startup window gains a `preparing-runtime` phase (with progress detail)
+  while archives are extracted on first launch.
 
 ### 5.2 Startup orchestration changes
 
-- `StartupOrchestrator.runOnce()` becomes: detect Node environment (bundled
-  path is a pure local check) → validate bundled DSH runtime (local hash
-  checks) → spawn `dsh web` → health check → show workspace. With both
-  runtimes bundled, first launch performs zero network operations.
+- `StartupOrchestrator.runOnce()` becomes: detect Node environment (extract
+  the bundled Node archive first when needed) → prepare the DSH runtime
+  (extract the bundled DSH archive when no valid selection exists) → spawn
+  `dsh web` → health check → show workspace. With both runtimes bundled,
+  first launch performs zero network operations; later launches reuse the
+  extracted copies and skip extraction entirely.
 - Runtime validation results are cached per process (no repeated SHA256 work).
 - The workspace window preloads the DeepSeek tab in the background as soon as
   `showDsh()` completes, instead of on first tab switch.
@@ -139,11 +162,30 @@ New module `src/main/tray-controller.ts`:
   generated `.artifacts/bundled-dsh/<version>/runtime-manifest.json` instead
   of hardcoding `0.1.0-rc.6`.
 
+## 5.6 Why v0.1 installs are slow, and what changes
+
+v0.1's installer contains the bundled DSH runtime as ~30,000 loose files
+under `resources/dsh-runtime/` (`scripts/after-pack.cjs` enforces
+`descriptor.files >= 30_000`). NSIS extracts and writes every file
+individually, so install time is dominated by small-file write overhead and
+antivirus scanning, not by network or compression. v0.2 adds the Node runtime
+(~15,000 more files), which would make the problem worse.
+
+The fix: ship both runtimes as single `.tar.gz` archives and extract them on
+first launch into the per-user data directory with a visible progress phase.
+The installer then writes only the Electron app plus two large archive files.
+First launch pays a one-time extraction cost (~10-30s on an SSD, shown in the
+startup window); every later launch uses the cached extraction directly.
+
 ## 6. Error Handling
 
-- Bundled Node missing/corrupt (hash mismatch): fall back to the system Node
-  detection path; if that also fails, the existing `environment-error` screen
-  with `open-node-download` action is shown (unchanged).
+- Bundled Node archive missing/corrupt (hash mismatch): fall back to the
+  system Node detection path; if that also fails, the existing
+  `environment-error` screen with `open-node-download` action is shown
+  (unchanged).
+- Archive extraction failure: remove the partial directory, log the error,
+  and use the fallback path (system Node for the runtime, network npm
+  install for DSH).
 - Node download/extract failure during build: the prepare script fails the
   build with a clear message (no silent partial bundle).
 - Tray creation failure (rare): log and continue without tray; window close
@@ -152,8 +194,10 @@ New module `src/main/tray-controller.ts`:
 ## 7. Testing
 
 - Unit tests:
+  - `tar-extract.spec.ts`: round-trip extraction (create with `tar.exe`,
+    extract with the module), path-traversal rejection, gzip stream errors.
   - `node-environment.spec.ts`: bundled-first priority, fallback to system,
-    bundled manifest hash validation.
+    extracted manifest hash validation.
   - `tray-controller.spec.ts` (or equivalent): close→hide flow, quit stops
     the service, first-hide notification fires once.
   - `builder-config.spec.ts`: assert `oneClick: false` and
@@ -161,11 +205,15 @@ New module `src/main/tray-controller.ts`:
   - `app-paths.spec.ts` / config: single-source version constants.
 - Integration:
   - `verify:real-dsh` extended (or a new `verify:bundled-node` script) to run
-    against the bundled Node runtime with the system PATH stripped of Node,
-    proving a Node-less machine works.
+    against the extracted bundled Node runtime with the system PATH stripped
+    of Node, proving a Node-less machine works.
+  - Archive round-trip: build script output is re-extracted by the app module
+    in a test fixture.
 - Manual checklist:
   - Assisted install with custom directory; app launches on a Node-less VM;
-  - First launch reaches DSH UI without network install;
+  - Installer completes quickly (no multi-minute small-file writes);
+  - First launch shows runtime-extraction progress, then reaches DSH UI
+    without network install; second launch skips extraction;
   - Close window → tray icon present, DSH still healthy; tray Exit → DSH
     process tree gone and app fully quit;
   - Dev mode (`npm run dev`) keeps old close-to-quit behavior.
