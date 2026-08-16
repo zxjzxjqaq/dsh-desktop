@@ -6,6 +6,7 @@ import type { AppPaths } from './platform/app-paths.js'
 import { versionDirectory } from './platform/app-paths.js'
 import { readJson, writeJsonAtomic } from './platform/atomic-json.js'
 import { runProcess, type ProcessRunner } from './platform/process-runner.js'
+import type { RuntimeExtractor } from './runtime-extractor.js'
 import type { ValidNodeEnvironment } from './node-environment.js'
 
 export interface DshSelection {
@@ -26,17 +27,9 @@ interface DshManifest {
   readonly bin?: string | Readonly<Record<string, string>>
 }
 
-interface BundledRuntimeManifest {
-  readonly schema?: number
-  readonly version?: string
-  readonly packageJsonSha256?: string
-  readonly binarySha256?: string
-  readonly binary?: string
-}
-
 export interface DshPackageManagerOptions {
   readonly runner?: ProcessRunner
-  readonly bundledDirectory?: string
+  readonly extractor?: RuntimeExtractor | null
 }
 
 function sha256(content: Buffer): string {
@@ -55,14 +48,14 @@ async function exists(path: string): Promise<boolean> {
 
 export class DshPackageManager {
   private readonly runner: ProcessRunner
-  private readonly bundledDirectory: string | null
+  private readonly extractor: RuntimeExtractor | null
 
   public constructor(
     private readonly paths: AppPaths,
     options: DshPackageManagerOptions = {}
   ) {
     this.runner = options.runner ?? runProcess
-    this.bundledDirectory = options.bundledDirectory ? resolve(options.bundledDirectory) : null
+    this.extractor = options.extractor ?? null
   }
 
   public async current(): Promise<DshSelection | null> {
@@ -90,24 +83,6 @@ export class DshPackageManager {
     if (!binaryPath.startsWith(`${packageRoot}${sep}`)) throw new Error('DSH binary escaped package root')
     if (!(await exists(binaryPath))) throw new Error('Installed DSH binary does not exist')
 
-    if (this.bundledDirectory && resolvedDirectory === this.bundledDirectory) {
-      const runtime = JSON.parse(
-        await readFile(join(resolvedDirectory, 'runtime-manifest.json'), 'utf8')
-      ) as BundledRuntimeManifest
-      if (runtime.schema !== 1 || runtime.version !== expectedVersion) {
-        throw new Error('Bundled DSH runtime manifest is invalid')
-      }
-      if (runtime.binary?.replaceAll('/', sep) !== binaryPath.slice(resolvedDirectory.length + 1)) {
-        throw new Error('Bundled DSH runtime binary path does not match')
-      }
-      if (runtime.packageJsonSha256 !== sha256(manifestContent)) {
-        throw new Error('Bundled DSH package manifest checksum does not match')
-      }
-      if (runtime.binarySha256 !== sha256(await readFile(binaryPath))) {
-        throw new Error('Bundled DSH binary checksum does not match')
-      }
-    }
-
     return {
       selection: {
         version: expectedVersion,
@@ -121,15 +96,17 @@ export class DshPackageManager {
   public async validate(directory: string, expectedVersion: string): Promise<DshInstall> {
     const resolvedDirectory = resolve(directory)
     const managedDirectory = versionDirectory(this.paths, expectedVersion)
-    const isManaged = resolvedDirectory === managedDirectory
-    const isBundled = this.bundledDirectory !== null && resolvedDirectory === this.bundledDirectory
-    if (!isManaged && !isBundled) throw new Error('DSH selection is outside a trusted version store')
+    if (resolvedDirectory !== managedDirectory) {
+      throw new Error('DSH selection is outside a trusted version store')
+    }
     return await this.validateAt(resolvedDirectory, expectedVersion)
   }
 
-  public async bundled(expectedVersion: string): Promise<DshInstall | null> {
-    if (!this.bundledDirectory) return null
-    return await this.validate(this.bundledDirectory, expectedVersion)
+  public async restoreBundled(version: string): Promise<DshInstall | null> {
+    if (!this.extractor) return null
+    const directory = await this.extractor.dshRuntimeDirectory()
+    if (!directory) return null
+    return await this.validate(directory, version)
   }
 
   public async install(

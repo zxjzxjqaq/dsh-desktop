@@ -1,9 +1,11 @@
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { DshPackageManager } from '../../src/main/dsh-package-manager.js'
+import { RuntimeExtractor } from '../../src/main/runtime-extractor.js'
 import { createAppPaths, versionDirectory } from '../../src/main/platform/app-paths.js'
 import type { ProcessRunner } from '../../src/main/platform/process-runner.js'
 
@@ -18,7 +20,7 @@ async function root(): Promise<string> {
 
 const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex')
 
-async function createDsh(directory: string, bundled = false): Promise<void> {
+async function createDsh(directory: string): Promise<void> {
   const packageRoot = join(directory, 'node_modules', '@deepseek-ai', 'dsh')
   const binaryPath = join(packageRoot, 'lib', 'bin.js')
   await mkdir(join(packageRoot, 'lib'), { recursive: true })
@@ -30,15 +32,6 @@ async function createDsh(directory: string, bundled = false): Promise<void> {
   const binary = Buffer.from('console.log("dsh")\n')
   await writeFile(join(packageRoot, 'package.json'), packageJson)
   await writeFile(binaryPath, binary)
-  if (bundled) {
-    await writeFile(join(directory, 'runtime-manifest.json'), JSON.stringify({
-      schema: 1,
-      version,
-      packageJsonSha256: sha256(packageJson),
-      binarySha256: sha256(binary),
-      binary: 'node_modules/@deepseek-ai/dsh/lib/bin.js'
-    }))
-  }
 }
 
 afterEach(async () => {
@@ -46,29 +39,38 @@ afterEach(async () => {
 })
 
 describe('DSH package manager', () => {
-  it('validates and selects the complete bundled runtime', async () => {
+  it('restores the bundled DSH runtime from its archive', async () => {
     const workspace = await root()
-    const bundled = resolve(workspace, 'resources', 'dsh-runtime', version)
-    await createDsh(bundled, true)
     const paths = createAppPaths(join(workspace, 'user-data'))
-    const packages = new DshPackageManager(paths, { bundledDirectory: bundled })
+    const source = resolve(workspace, 'runtime-source')
+    await createDsh(source)
+    const resources = resolve(workspace, 'resources')
+    await mkdir(resources, { recursive: true })
+    const archiveName = `dsh-runtime-${version}.tar.gz`
+    const archivePath = join(resources, archiveName)
+    execFileSync('tar', ['-czf', archivePath, '-C', source, '.'], { stdio: 'pipe' })
+    await writeFile(join(resources, 'runtime-manifest.json'), JSON.stringify({
+      schema: 1,
+      version,
+      archives: {
+        node: { name: 'node-runtime.tar.gz', sha256: '0'.repeat(64) },
+        dsh: { name: archiveName, sha256: sha256(await readFile(archivePath)) }
+      }
+    }))
+    const extractor = new RuntimeExtractor(paths, { resourcesDirectory: resources })
+    const packages = new DshPackageManager(paths, { extractor })
 
-    const install = await packages.bundled(version)
-    expect(install?.selection.directory).toBe(bundled)
+    const install = await packages.restoreBundled(version)
+    expect(install?.selection.directory).toBe(versionDirectory(paths, version))
     await packages.select(install!.selection)
-    expect((await packages.current())?.directory).toBe(bundled)
+    expect((await packages.current())?.directory).toBe(versionDirectory(paths, version))
   })
 
-  it('rejects a bundled runtime whose binary checksum changed', async () => {
+  it('returns null when no bundled archive exists', async () => {
     const workspace = await root()
-    const bundled = resolve(workspace, 'resources', 'dsh-runtime', version)
-    await createDsh(bundled, true)
-    await writeFile(join(bundled, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'tampered')
-    const packages = new DshPackageManager(createAppPaths(join(workspace, 'user-data')), {
-      bundledDirectory: bundled
-    })
-
-    await expect(packages.bundled(version)).rejects.toThrow('binary checksum')
+    const paths = createAppPaths(join(workspace, 'user-data'))
+    const packages = new DshPackageManager(paths, { extractor: null })
+    expect(await packages.restoreBundled(version)).toBeNull()
   })
 
   it('validates a staged npm install before moving it into the managed store', async () => {
