@@ -1,22 +1,29 @@
-const { cp, readFile, rm, stat } = require('node:fs/promises')
-const { join, resolve, sep } = require('node:path')
-
-const dshVersion = '0.1.0-rc.6'
+const { cp, readFile, stat, writeFile } = require('node:fs/promises')
+const { join, resolve } = require('node:path')
 
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'win32') return
-  const source = resolve('.artifacts', 'bundled-dsh', dshVersion)
-  const resources = resolve(context.appOutDir, 'resources')
-  const destination = resolve(resources, 'dsh-runtime', dshVersion)
-  if (!destination.startsWith(`${resources}${sep}`)) throw new Error('DSH Runtime destination escaped resources')
-  await stat(join(source, 'runtime-manifest.json'))
-  await stat(join(source, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
-  await rm(destination, { recursive: true, force: true })
-  await cp(source, destination, { recursive: true, force: true, dereference: true })
-  const descriptor = JSON.parse(await readFile(join(destination, 'runtime-manifest.json'), 'utf8'))
-  if (descriptor.version !== dshVersion || descriptor.files < 30_000) {
-    throw new Error('Copied DSH Runtime manifest is incomplete')
+  const archivesRoot = resolve('.artifacts', 'archives')
+  const archivesManifest = JSON.parse(await readFile(join(archivesRoot, 'runtime-manifest.json'), 'utf8'))
+  if (archivesManifest.schema !== 1 || !archivesManifest.version) {
+    throw new Error('Bundled runtime archives manifest is missing or invalid')
   }
-  await stat(join(destination, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
-  process.stdout.write(`Bundled DSH Runtime copied to ${destination} (${descriptor.files} files)\n`)
+  const resources = resolve(context.appOutDir, 'resources')
+  const copied = []
+  for (const key of ['node', 'dsh']) {
+    const entry = archivesManifest.archives?.[key]
+    if (!entry || typeof entry.name !== 'string' || typeof entry.sha256 !== 'string') {
+      throw new Error(`Bundled runtime archive ${key} is missing from the manifest`)
+    }
+    const source = resolve(archivesRoot, entry.name)
+    await stat(source)
+    await cp(source, join(resources, entry.name), { force: true })
+    copied.push(entry.name)
+  }
+  await writeFile(
+    join(resources, 'runtime-manifest.json'),
+    `${JSON.stringify(archivesManifest, null, 2)}\n`,
+    'utf8'
+  )
+  process.stdout.write(`Bundled runtime archives copied: ${copied.join(', ')}\n`)
 }

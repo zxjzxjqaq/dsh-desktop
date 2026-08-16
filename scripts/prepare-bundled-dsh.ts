@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
@@ -107,4 +108,45 @@ await writeFile(
   }, null, 2)}\n`,
   'utf8'
 )
-process.stdout.write(`${JSON.stringify({ target, version: INITIAL_DSH_VERSION, ...inspected }, null, 2)}\n`)
+
+const archivesRoot = resolve('.artifacts', 'archives')
+const archiveName = `dsh-runtime-${INITIAL_DSH_VERSION}.tar.gz`
+const archivePath = join(archivesRoot, archiveName)
+const archivesManifestPath = join(archivesRoot, 'runtime-manifest.json')
+
+interface ArchivesManifest {
+  readonly schema: number
+  readonly version: string
+  readonly archives: {
+    readonly node?: { readonly name: string; readonly sha256: string }
+    readonly dsh?: { readonly name: string; readonly sha256: string }
+  }
+}
+
+async function mergeArchivesManifest(partial: Partial<ArchivesManifest['archives']>): Promise<void> {
+  let previous: ArchivesManifest | null = null
+  try {
+    previous = JSON.parse(await readFile(archivesManifestPath, 'utf8')) as ArchivesManifest
+  } catch {
+    previous = null
+  }
+  const merged: ArchivesManifest = {
+    schema: 1,
+    version: INITIAL_DSH_VERSION,
+    archives: { ...(previous?.archives ?? {}), ...partial }
+  }
+  await mkdir(archivesRoot, { recursive: true })
+  await writeFile(archivesManifestPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
+}
+
+await mkdir(archivesRoot, { recursive: true })
+execFileSync(
+  'tar',
+  ['-czf', archivePath, '-C', resolve('.artifacts', 'bundled-dsh'), INITIAL_DSH_VERSION],
+  { stdio: 'pipe' }
+)
+await mergeArchivesManifest({
+  dsh: { name: archiveName, sha256: sha256(await readFile(archivePath)) }
+})
+
+process.stdout.write(`${JSON.stringify({ target, version: INITIAL_DSH_VERSION, archive: archivePath, ...inspected }, null, 2)}\n`)
