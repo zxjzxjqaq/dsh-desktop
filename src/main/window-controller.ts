@@ -25,6 +25,8 @@ export class WindowController {
   private activeTab: WorkspaceTab = DEFAULT_WORKSPACE_TAB
   private deepseekStarted = false
   private deepseekLoadTimer: NodeJS.Timeout | null = null
+  private closePolicy: (() => boolean) | null = null
+  private onWindowHidden: () => void = () => undefined
 
   public constructor(
     private readonly dshUrl = DSH_URL,
@@ -41,6 +43,11 @@ export class WindowController {
 
   public isShellSender(senderId: number): boolean {
     return this.shellView?.webContents.id === senderId
+  }
+
+  public setCloseBehavior(policy: () => boolean, onHidden: () => void): void {
+    this.closePolicy = policy
+    this.onWindowHidden = onHidden
   }
 
   private async loadRenderer(window: BrowserWindow, page: 'startup'): Promise<void> {
@@ -87,6 +94,13 @@ export class WindowController {
     })
     this.startupWindow = window
     window.once('ready-to-show', () => window.show())
+    window.on('close', (event) => {
+      if (this.closePolicy?.()) {
+        event.preventDefault()
+        window.hide()
+        this.onWindowHidden()
+      }
+    })
     window.on('closed', () => {
       if (this.startupWindow === window) this.startupWindow = null
     })
@@ -276,6 +290,13 @@ export class WindowController {
     window.contentView.addChildView(this.shellView)
     window.on('resize', () => this.layoutViews())
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    window.on('close', (event) => {
+      if (this.closePolicy?.()) {
+        event.preventDefault()
+        window.hide()
+        this.onWindowHidden()
+      }
+    })
     window.on('closed', () => {
       if (this.workspaceWindow !== window) return
       this.workspaceWindow = null
@@ -289,6 +310,7 @@ export class WindowController {
     ])
     this.layoutViews()
     await this.selectTab(DEFAULT_WORKSPACE_TAB)
+    if (DEFAULT_WORKSPACE_TAB === 'dsh') this.startDeepSeek()
     window.show()
     startup?.destroy()
     this.startupWindow = null
