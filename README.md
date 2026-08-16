@@ -30,6 +30,12 @@ DSH 独立更新、健康检查和 DSH 版本回滚。
 
 ## 开发和构建
 
+开发环境要求（与最终用户不同，**构建本仓库需要 Node.js**）：
+
+- Windows 10/11 x64；
+- Node.js `^22.19.0` 或 `>=24.0.0`（含 npm）；
+- 国内网络建议先配置 npm 镜像（如 `npm config set registry https://registry.npmmirror.com`）。
+
 ```powershell
 npm.cmd ci
 npm.cmd run typecheck
@@ -37,8 +43,8 @@ npm.cmd test
 npm.cmd run dev
 ```
 
-生成 Windows 安装包（构建时从 nodejs.org 下载捆绑的 Node.js，并打包捆绑
-的 DSH 运行时）：
+生成 Windows 安装包（首次构建会从 nodejs.org 下载捆绑的 Node.js，并从 npm
+安装捆绑的 DSH 运行时，需要几分钟网络时间）：
 
 ```powershell
 npm.cmd run dist:win
@@ -113,4 +119,21 @@ npm.cmd run verify:desktop-update
 `.artifacts/update-feed` 中存在更高版本测试包；测试脚本禁用
 “退出即安装”，只验证发现、下载和更新包校验。
 
-详细设计、实施计划和实测记录位于 `docs/superpowers/`。
+## 开发环境变量
+
+| 变量 | 作用 |
+| --- | --- |
+| `DSH_DESKTOP_TRAY=1` | 开发模式下启用托盘常驻（打包版默认启用） |
+| `DSH_DESKTOP_UPDATE_URL` | 覆盖桌面更新源地址 |
+| `DSH_DESKTOP_TEST_MODE=1` | 测试模式：允许自定义端口/数据目录/自动退出 |
+| `DSH_DESKTOP_DATA_ROOT` | 测试模式下的用户数据目录 |
+| `DSH_DESKTOP_PORT` | 测试模式下的 DSH 端口（默认 3080） |
+| `DSH_DESKTOP_AUTO_EXIT_MS` | 测试模式下自动退出毫秒数 |
+| `DSH_DESKTOP_SCREENSHOT` | 测试模式下启动后截图保存路径 |
+
+## 文档索引
+
+设计、实施计划与验证记录按时间线存放在 `docs/`，入口见
+[`docs/README.md`](docs/README.md)：v0.1 原始设计、v0.2（捆绑 Node / 归档
+运行时 / 托盘 / 向导安装）设计与实施计划、Android 可行性评估、Windows x64
+实测记录。
