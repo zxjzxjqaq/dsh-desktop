@@ -17,6 +17,7 @@ const newSelection: DshSelection = {
 }
 const environment: NodeEnvironment = {
   ok: true,
+  source: 'system',
   nodePath: 'C:\\Node\\node.exe',
   npmPath: 'C:\\Node\\npm.cmd',
   npmCliPath: 'C:\\Node\\node_modules\\npm\\bin\\npm-cli.js',
