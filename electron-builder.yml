@@ -19,9 +19,10 @@ win:
         - x64
   artifactName: DSH-Desktop-${version}-Setup.${ext}
 nsis:
-  oneClick: true
+  oneClick: false
   perMachine: false
   allowElevation: false
+  allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: DSH Desktop

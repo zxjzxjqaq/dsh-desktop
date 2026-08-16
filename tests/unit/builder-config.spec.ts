@@ -8,6 +8,8 @@ describe('Windows builder configuration', () => {
     expect(config).toContain('target: nsis')
     expect(config).toContain('- x64')
     expect(config).toContain('perMachine: false')
+    expect(config).toContain('oneClick: false')
+    expect(config).toContain('allowToChangeInstallationDirectory: true')
     expect(config).toContain('allowElevation: false')
     expect(config).toContain('provider: github')
     expect(config).toContain('owner: zxjzxjqaq')
