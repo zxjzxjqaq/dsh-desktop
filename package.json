@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Windows desktop wrapper for DeepSeek Harness Web UI",
   "author": "DSH Desktop contributors",
   "repository": {
