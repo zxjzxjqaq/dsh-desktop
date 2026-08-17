@@ -7,7 +7,13 @@ import {
   DSH_URL,
   PRODUCT_NAME
 } from '../shared/config.js'
-import type { StartupStatus, WorkspaceTab, WorkspaceTabState } from '../shared/contracts.js'
+import type {
+  DshServiceStatus,
+  DshUpdateState,
+  StartupStatus,
+  WorkspaceTab,
+  WorkspaceTabState
+} from '../shared/contracts.js'
 import {
   isAllowedDeepSeekNavigation,
   isAllowedDshNavigation,
@@ -121,6 +127,26 @@ export class WindowController {
     const window = this.workspaceWindow
     if (!window || window.isDestroyed()) return
     this.shellView?.webContents.send('shell:tab-state', state)
+  }
+
+  public sendServiceStatus(status: DshServiceStatus): void {
+    this.shellView?.webContents.send('shell:service-status', status)
+  }
+
+  public sendUpdateState(state: DshUpdateState): void {
+    this.shellView?.webContents.send('shell:update-state', state)
+  }
+
+  /**
+   * Reload the DSH workspace view in place. Used by the supervisor after an
+   * in-place service restart so the user lands on a live page again. Safe to
+   * call before the workspace window exists (no-op).
+   */
+  public reloadDsh(): void {
+    const view = this.dshView
+    if (!view || view.webContents.isDestroyed()) return
+    this.sendTabState({ tab: 'dsh', loading: true, detail: '正在恢复 DSH 连接…' })
+    view.webContents.reload()
   }
 
   private layoutViews(): void {

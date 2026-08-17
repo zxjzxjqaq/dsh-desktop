@@ -51,8 +51,44 @@ export interface WorkspaceTabState {
   readonly detail?: string
 }
 
+/** Watchdog view of the DSH service, shared with the shell toolbar. */
+export type DshServicePhase = 'watching' | 'degraded' | 'restarting' | 'failed' | 'stopped'
+
+export interface DshServiceStatus {
+  readonly phase: DshServicePhase
+  readonly failures: number
+  readonly detail?: string
+}
+
+/** DSH release update pipeline state, shared with the shell toolbar. */
+export type DshUpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'update-available'
+  | 'preparing'
+  | 'applying'
+  | 'applied'
+  | 'rolled-back'
+  | 'failed'
+
+export interface DshUpdateState {
+  readonly phase: DshUpdatePhase
+  readonly version?: string
+  readonly detail?: string
+}
+
+/** One-shot state the shell renderer pulls on load so it never misses a push. */
+export interface ShellSnapshot {
+  readonly service: DshServiceStatus
+  readonly update: DshUpdateState
+}
+
 export interface ShellBridge {
   selectTab(tab: WorkspaceTab): Promise<void>
+  restartDsh(): Promise<void>
+  getSnapshot(): Promise<ShellSnapshot>
   onTabChanged(listener: (tab: WorkspaceTab) => void): () => void
   onTabState(listener: (state: WorkspaceTabState) => void): () => void
+  onServiceStatus(listener: (status: DshServiceStatus) => void): () => void
+  onUpdateState(listener: (state: DshUpdateState) => void): () => void
 }

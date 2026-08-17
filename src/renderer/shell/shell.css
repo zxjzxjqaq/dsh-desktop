@@ -150,6 +150,63 @@ body {
   white-space: nowrap;
 }
 
+.status-area {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dsh-status {
+  overflow: hidden;
+  color: #8a96ad;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-status.is-busy {
+  color: #e8c37b;
+}
+
+.dsh-status.is-error {
+  color: #ff9b9b;
+}
+
+.update-status {
+  padding: 2px 8px;
+  border: 1px solid rgb(92 141 255 / 40%);
+  border-radius: 999px;
+  background: rgb(92 141 255 / 12%);
+  color: #9fc0ff;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.restart-button {
+  padding: 4px 10px;
+  border: 1px solid rgb(255 155 155 / 45%);
+  border-radius: 6px;
+  background: rgb(255 155 155 / 10%);
+  color: #ffb4b4;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.restart-button:hover {
+  background: rgb(255 155 155 / 18%);
+}
+
+.restart-button:focus-visible {
+  outline: 2px solid #ff9b9b;
+  outline-offset: 1px;
+}
+
 .state.is-loading {
   color: #9cb7ef;
 }

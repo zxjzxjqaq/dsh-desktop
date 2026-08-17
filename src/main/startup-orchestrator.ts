@@ -1,6 +1,6 @@
 import { INITIAL_DSH_VERSION, NODE_VERSION_RANGE } from '../shared/config.js'
 import type { StartupStatus } from '../shared/contracts.js'
-import type { DshPackageManager } from './dsh-package-manager.js'
+import type { DshPackageManager, DshInstall } from './dsh-package-manager.js'
 import { DshServiceManager } from './dsh-service-manager.js'
 import type { FileLogger } from './logging.js'
 import { detectNodeEnvironment, type ValidNodeEnvironment } from './node-environment.js'
@@ -25,12 +25,18 @@ function status(
   }
 }
 
+export interface StartupOrchestratorOptions {
+  readonly onUnexpectedExit?: () => void
+  readonly onServiceStarted?: () => void
+  readonly restartAttemptDelayMs?: number
+  readonly restartMaxAttempts?: number
+}
+
 export class StartupOrchestrator {
   private running: Promise<boolean> | null = null
   private service: DshServiceManager | null = null
   private environment: ValidNodeEnvironment | null = null
-  private activeDshVersion: string | null = null
-  private crashRestarts = 0
+  private install: DshInstall | null = null
   /** 两个内置运行环境各自的最新解压进度，合并成单一进度条展示 */
   private runtimeProgress: Record<'node' | 'dsh', { done: number; total: number | null }> = {
     node: { done: 0, total: null },
@@ -42,7 +48,8 @@ export class StartupOrchestrator {
     private readonly packages: DshPackageManager,
     private readonly logger: FileLogger,
     private readonly dshUrl = 'http://127.0.0.1:3080',
-    private readonly extractor: RuntimeExtractor | null = null
+    private readonly extractor: RuntimeExtractor | null = null,
+    private readonly options: StartupOrchestratorOptions = {}
   ) {}
 
   public get versions(): {
@@ -52,11 +59,15 @@ export class StartupOrchestrator {
     readonly npm: string | null
   } {
     return {
-      dsh: this.activeDshVersion,
+      dsh: this.install?.selection.version ?? null,
       node: this.environment?.nodeVersion ?? null,
       nodeSource: this.environment?.source ?? null,
       npm: this.environment?.npmVersion ?? null
     }
+  }
+
+  public get serviceRunning(): boolean {
+    return this.service !== null
   }
 
   /** 由 RuntimeExtractor 上报单归档解压进度，合并后推送启动界面（节流已在解压层完成） */
@@ -141,36 +152,9 @@ export class StartupOrchestrator {
         `DSH ${INITIAL_DSH_VERSION} · Node.js ${environment.nodeVersion}`
       )
     )
-    let install
+    let install: DshInstall | null = null
     try {
-      const current = await this.packages.current()
-      if (current) {
-        try {
-          install = await this.packages.validate(current.directory, current.version)
-        } catch (error) {
-          await this.logger.write('desktop', `Current DSH selection is invalid; using bundled fallback: ${String(error)}`)
-        }
-      }
-      if (!install) {
-        try {
-          install = await this.packages.restoreBundled(INITIAL_DSH_VERSION)
-        } catch (error) {
-          await this.logger.write('desktop', `Bundled DSH is unavailable; using network fallback: ${String(error)}`)
-        }
-        if (install) {
-          await this.logger.write('desktop', `Using bundled DSH ${install.selection.version}`)
-        } else {
-          this.windows.sendStatus(
-            status(
-              'preparing-dsh',
-              '正在下载 DSH 运行环境',
-              `内置运行环境不可用，正在获取 DSH ${INITIAL_DSH_VERSION}`
-            )
-          )
-          install = await this.packages.install(environment, INITIAL_DSH_VERSION)
-        }
-        await this.packages.select(install.selection)
-      }
+      install = await this.resolveInstall(environment)
       await this.logger.write('desktop', `DSH runtime ready in ${Date.now() - startupStartedAt}ms`)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
@@ -184,19 +168,12 @@ export class StartupOrchestrator {
       )
       return false
     }
-    this.activeDshVersion = install.selection.version
+    this.install = install
 
     this.windows.sendStatus(
       status('starting-dsh', '正在启动 DSH 服务', `DSH ${install.selection.version}`)
     )
-    const service = new DshServiceManager({
-      nodePath: environment.nodePath,
-      binaryPath: install.binaryPath,
-      host: new URL(this.dshUrl).hostname,
-      port: Number(new URL(this.dshUrl).port),
-      logger: this.logger,
-      onUnexpectedExit: () => void this.handleUnexpectedExit()
-    })
+    const service = this.createService(environment, install)
     this.service = service
     this.windows.sendStatus(
       status('waiting-for-health', '正在连接 DSH Web', '正在等待 127.0.0.1:3080 就绪…')
@@ -204,7 +181,7 @@ export class StartupOrchestrator {
     try {
       const serviceStartedAt = Date.now()
       await service.start()
-      this.crashRestarts = 0
+      this.options.onServiceStarted?.()
       await this.logger.write(
         'desktop',
         `DSH ${install.selection.version} is healthy in ${Date.now() - serviceStartedAt}ms; total startup ${Date.now() - startupStartedAt}ms`
@@ -225,30 +202,81 @@ export class StartupOrchestrator {
     }
   }
 
-  private async handleUnexpectedExit(): Promise<void> {
-    if (this.crashRestarts >= 1) {
-      this.windows.sendStatus(
-        status('service-error', 'DSH 服务已停止', '自动重启仍然失败，请查看日志。', [
-          'retry',
-          'open-logs',
-          'exit'
-        ])
-      )
-      return
+  private async resolveInstall(environment: ValidNodeEnvironment): Promise<DshInstall> {
+    const current = await this.packages.current()
+    if (current) {
+      try {
+        return await this.packages.validate(current.directory, current.version)
+      } catch (error) {
+        await this.logger.write('desktop', `Current DSH selection is invalid; using bundled fallback: ${String(error)}`)
+      }
     }
-    this.crashRestarts += 1
-    await this.logger.write('desktop', 'DSH exited unexpectedly; attempting one restart')
+    const bundled = await this.packages.restoreBundled(INITIAL_DSH_VERSION)
+    if (bundled) {
+      await this.logger.write('desktop', `Using bundled DSH ${bundled.selection.version}`)
+      await this.packages.select(bundled.selection)
+      return bundled
+    }
     this.windows.sendStatus(
-      status('starting-dsh', '正在重新启动 DSH', '检测到服务意外退出，正在自动重试一次。')
+      status(
+        'preparing-dsh',
+        '正在下载 DSH 运行环境',
+        `内置运行环境不可用，正在获取 DSH ${INITIAL_DSH_VERSION}`
+      )
     )
-    this.service = null
-    await this.restart()
+    const install = await this.packages.install(environment, INITIAL_DSH_VERSION)
+    await this.packages.select(install.selection)
+    return install
   }
 
+  private createService(environment: ValidNodeEnvironment, install: DshInstall): DshServiceManager {
+    return new DshServiceManager({
+      nodePath: environment.nodePath,
+      binaryPath: install.binaryPath,
+      host: new URL(this.dshUrl).hostname,
+      port: Number(new URL(this.dshUrl).port),
+      logger: this.logger,
+      onUnexpectedExit: () => void this.options.onUnexpectedExit?.()
+    })
+  }
+
+  /**
+   * Restart the DSH service *in place*: stop the child process tree, spawn a
+   * fresh one for the same selected version, wait for health and reconnect the
+   * workspace view. Windows are never touched, so a DeepSeek chat session and
+   * the toolbar keep working across the restart.
+   *
+   * Used by the supervisor (watchdog) and the update pipeline.
+   */
   public async restart(): Promise<boolean> {
+    const environment = this.environment
+    const install = this.install
+    if (!environment || !install) {
+      await this.logger.write('desktop', 'Restart requested but the environment/install is not ready')
+      return false
+    }
     await this.stop()
-    this.windows.showStartup()
-    return await this.run()
+    const delayMs = this.options.restartAttemptDelayMs ?? 500
+    const maxAttempts = this.options.restartMaxAttempts ?? 3
+    let lastError: unknown = null
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, delayMs))
+      try {
+        const service = this.createService(environment, install)
+        this.service = service
+        await service.start()
+        this.options.onServiceStarted?.()
+        await this.logger.write('desktop', `DSH ${install.selection.version} restarted in place`)
+        this.windows.reloadDsh()
+        return true
+      } catch (error) {
+        lastError = error
+        this.service = null
+      }
+    }
+    const detail = lastError instanceof Error ? lastError.message : String(lastError)
+    await this.logger.write('desktop', `DSH restart failed after ${maxAttempts} attempts: ${detail}`)
+    return false
   }
 
   public async stop(): Promise<void> {

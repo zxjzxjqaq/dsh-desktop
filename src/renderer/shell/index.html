@@ -28,7 +28,12 @@
           <span class="tab-badge">本地</span>
         </button>
       </nav>
-      <div id="state" class="state is-loading" role="status">正在连接 DeepSeek…</div>
+      <div class="status-area" role="status">
+        <div id="state" class="state is-loading">正在连接 DeepSeek…</div>
+        <div id="dsh-status" class="dsh-status" hidden></div>
+        <span id="update-status" class="update-status" hidden>DSH 新版本可用</span>
+        <button id="restart-dsh" class="restart-button" type="button" hidden>重启 DSH</button>
+      </div>
     </header>
     <script type="module" src="./shell.ts"></script>
   </body>

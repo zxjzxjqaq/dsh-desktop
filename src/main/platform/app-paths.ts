@@ -8,7 +8,9 @@ export interface AppPaths {
   readonly staging: string
   readonly currentPointer: string
   readonly previousPointer: string
+  readonly historyPointer: string
   readonly failedReleases: string
+  readonly settings: string
   readonly logs: string
 }
 
@@ -22,7 +24,9 @@ export function createAppPaths(userData: string): AppPaths {
     staging: join(dsh, 'staging'),
     currentPointer: join(dsh, 'current.json'),
     previousPointer: join(dsh, 'previous.json'),
+    historyPointer: join(dsh, 'history.json'),
     failedReleases: join(dsh, 'failed-releases.json'),
+    settings: join(root, 'settings.json'),
     logs: join(root, 'logs')
   }
 }

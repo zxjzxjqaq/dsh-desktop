@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import semver from 'semver'
 import type { AppPaths } from './platform/app-paths.js'
@@ -21,6 +21,26 @@ export interface DshInstall {
   readonly binaryPath: string
 }
 
+export interface InstalledVersion {
+  readonly version: string
+  readonly directory: string
+  readonly sizeBytes: number
+  readonly selected: boolean
+  readonly installedAt?: string
+  readonly lastHealthyAt?: string
+}
+
+export interface PrunedVersion {
+  readonly version: string
+  readonly directory: string
+}
+
+export interface DshInstallOptions {
+  readonly registryUrl?: string | null
+  readonly proxyUrl?: string | null
+  readonly httpsProxyUrl?: string | null
+}
+
 interface DshManifest {
   readonly name?: string
   readonly version?: string
@@ -31,6 +51,8 @@ export interface DshPackageManagerOptions {
   readonly runner?: ProcessRunner
   readonly extractor?: RuntimeExtractor | null
 }
+
+const HISTORY_CAP = 8
 
 function sha256(content: Buffer): string {
   return createHash('sha256').update(content).digest('hex')
@@ -111,7 +133,8 @@ export class DshPackageManager {
 
   public async install(
     environment: Pick<ValidNodeEnvironment, 'nodePath' | 'npmCliPath'>,
-    version: string
+    version: string,
+    options: DshInstallOptions = {}
   ): Promise<DshInstall> {
     const finalDirectory = versionDirectory(this.paths, version)
     if (await exists(finalDirectory)) {
@@ -125,19 +148,23 @@ export class DshPackageManager {
     await mkdir(this.paths.staging, { recursive: true })
     const stagingDirectory = join(this.paths.staging, `${version}-${randomUUID()}`)
     await mkdir(stagingDirectory, { recursive: true })
+    const args = [
+      environment.npmCliPath,
+      'install',
+      '--prefix',
+      stagingDirectory,
+      '--omit=dev',
+      '--no-audit',
+      '--no-fund',
+      '--save-exact'
+    ]
+    if (options.registryUrl) args.push(`--registry=${options.registryUrl}`)
+    if (options.proxyUrl) args.push(`--proxy=${options.proxyUrl}`)
+    if (options.httpsProxyUrl) args.push(`--https-proxy=${options.httpsProxyUrl}`)
+    args.push(`@deepseek-ai/dsh@${version}`)
     const result = await this.runner(
       environment.nodePath,
-      [
-        environment.npmCliPath,
-        'install',
-        '--prefix',
-        stagingDirectory,
-        '--omit=dev',
-        '--no-audit',
-        '--no-fund',
-        '--save-exact',
-        `@deepseek-ai/dsh@${version}`
-      ],
+      args,
       { timeoutMs: 10 * 60_000 }
     )
     if (result.exitCode !== 0) {
@@ -168,6 +195,7 @@ export class DshPackageManager {
         const healthyCurrent = await this.validate(current.directory, current.version)
         if (healthyCurrent.selection.directory !== validated.selection.directory) {
           await writeJsonAtomic(this.paths.previousPointer, healthyCurrent.selection)
+          await this.recordHistory(healthyCurrent.selection)
         }
       } catch {
         // Invalid pointers are replaced, not promoted to rollback state.
@@ -180,7 +208,148 @@ export class DshPackageManager {
     const previous = await this.previous()
     if (!previous) throw new Error('No previous DSH release is available')
     const validated = await this.validate(previous.directory, previous.version)
+    const current = await this.current()
+    if (current && current.directory !== validated.selection.directory) {
+      try {
+        const install = await this.validate(current.directory, current.version)
+        await this.recordHistory(install.selection)
+      } catch {
+        // Invalid current pointers are not carried into history.
+      }
+    }
     await writeJsonAtomic(this.paths.currentPointer, validated.selection)
     return validated.selection
   }
+
+  /** Rollback chain (most recent first) for previously selected releases. */
+  public async history(): Promise<DshSelection[]> {
+    return await this.readHistory()
+  }
+
+  private async readHistory(): Promise<DshSelection[]> {
+    try {
+      const entries = await readJson<unknown>(this.paths.historyPointer)
+      if (!Array.isArray(entries)) return []
+      const validated: DshSelection[] = []
+      for (const entry of entries) {
+        if (typeof entry !== 'object' || entry === null) continue
+        const candidate = entry as Partial<DshSelection>
+        if (
+          typeof candidate.version !== 'string' ||
+          typeof candidate.directory !== 'string' ||
+          typeof candidate.installedAt !== 'string'
+        ) continue
+        try {
+          const install = await this.validate(candidate.directory, candidate.version)
+          validated.push({
+            ...install.selection,
+            ...(candidate.lastHealthyAt ? { lastHealthyAt: candidate.lastHealthyAt } : {})
+          })
+        } catch {
+          // Broken history entries are dropped on the next write.
+        }
+      }
+      return validated
+    } catch {
+      return []
+    }
+  }
+
+  private async writeHistory(entries: DshSelection[]): Promise<void> {
+    await writeJsonAtomic(this.paths.historyPointer, entries.slice(0, HISTORY_CAP))
+  }
+
+  private async recordHistory(selection: DshSelection): Promise<void> {
+    const entries = await this.readHistory()
+    const filtered = entries.filter((entry) => entry.directory !== selection.directory)
+    await this.writeHistory([selection, ...filtered])
+  }
+
+  /** Enumerate every managed DSH release directory with its on-disk size. */
+  public async installedVersions(): Promise<InstalledVersion[]> {
+    const current = await this.current()
+    const previous = await this.previous()
+    const history = await this.readHistory()
+    const knownByDirectory = new Map<string, DshSelection>()
+    for (const entry of history) knownByDirectory.set(entry.directory, entry)
+    if (current) knownByDirectory.set(current.directory, current)
+    if (previous) knownByDirectory.set(previous.directory, previous)
+    const entries = await readdir(this.paths.versions, { withFileTypes: true })
+    const versions: InstalledVersion[] = []
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      if (semver.valid(entry.name) !== entry.name) continue
+      const directory = resolve(this.paths.versions, entry.name)
+      const known = knownByDirectory.get(directory)
+      versions.push({
+        version: entry.name,
+        directory,
+        sizeBytes: await directorySize(directory),
+        selected: current?.directory === directory,
+        installedAt: known?.installedAt,
+        lastHealthyAt: known?.lastHealthyAt
+      })
+    }
+    return versions
+  }
+
+  /**
+   * Remove the oldest managed DSH releases so that only `keep` recent versions
+   * remain. The currently selected release, the rollback target and the
+   * bundled runtime are never removed.
+   */
+  public async pruneVersions(keep: number): Promise<PrunedVersion[]> {
+    const safeKeep = Math.max(2, Math.floor(keep))
+    const current = await this.current()
+    const previous = await this.previous()
+    const protectedDirectories = new Set<string>()
+    if (current) protectedDirectories.add(current.directory)
+    if (previous) protectedDirectories.add(previous.directory)
+    if (this.extractor) {
+      const bundledDirectory = await this.extractor.dshRuntimeDirectory().catch(() => null)
+      if (bundledDirectory) protectedDirectories.add(bundledDirectory)
+    }
+
+    const versions = await this.installedVersions()
+    const knownTime = (version: InstalledVersion): string =>
+      version.installedAt ?? '9999-12-31T23:59:59.999Z' // unknown install date counts as newest
+    const removable = versions
+      .filter((version) => !protectedDirectories.has(version.directory))
+      .sort((a, b) => {
+        const byTime = knownTime(a).localeCompare(knownTime(b))
+        return byTime !== 0 ? byTime : a.directory.localeCompare(b.directory)
+      })
+
+    const excess = Math.max(0, removable.length - Math.max(0, safeKeep - protectedDirectories.size))
+    const victims = removable.slice(0, excess)
+    const removed: PrunedVersion[] = []
+    for (const victim of victims) {
+      await rm(victim.directory, { recursive: true, force: true })
+      removed.push({ version: victim.version, directory: victim.directory })
+    }
+    if (removed.length > 0) {
+      const history = await this.readHistory()
+      const victimsSet = new Set(removed.map((victim) => victim.directory))
+      await this.writeHistory(history.filter((entry) => !victimsSet.has(entry.directory)))
+    }
+    return removed
+  }
+}
+
+async function directorySize(directory: string): Promise<number> {
+  let total = 0
+  const entries = await readdir(directory, { withFileTypes: true })
+  for (const entry of entries) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      total += await directorySize(path)
+    } else {
+      try {
+        total += (await stat(path)).size
+      } catch {
+        // Race with concurrent cleanup: skip unreadable entries.
+      }
+    }
+  }
+  return total
 }

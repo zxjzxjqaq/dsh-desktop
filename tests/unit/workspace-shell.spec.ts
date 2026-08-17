@@ -21,4 +21,22 @@ describe('workspace shell', () => {
     expect(menu).toContain("accelerator: 'CmdOrCtrl+2'")
     expect(menu).toContain("selectWorkspace('dsh')")
   })
+
+  it('surfaces the DSH service state and restart control in the toolbar', async () => {
+    const html = await readFile('src/renderer/shell/index.html', 'utf8')
+    expect(html).toContain('id="dsh-status"')
+    expect(html).toContain('id="restart-dsh"')
+    expect(html).toContain('id="update-status"')
+    const shell = await readFile('src/renderer/shell/shell.ts', 'utf8')
+    expect(shell).toContain('onServiceStatus(renderServiceStatus)')
+    expect(shell).toContain('onUpdateState(renderUpdateState)')
+    expect(shell).toContain('getSnapshot()')
+  })
+
+  it('keeps the DSH restart and update menu entries wired', async () => {
+    const menu = await readFile('src/main/app-menu.ts', 'utf8')
+    expect(menu).toContain('重新启动 DSH 服务')
+    expect(menu).toContain('管理 DSH 版本')
+    expect(menu).toContain('DSH 更新设置')
+  })
 })

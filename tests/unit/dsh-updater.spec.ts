@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DshUpdater, type DshUpdateStore } from '../../src/main/dsh-updater.js'
-import type { DshSelection } from '../../src/main/dsh-package-manager.js'
+import type { DshInstallOptions, DshSelection } from '../../src/main/dsh-package-manager.js'
 import type { NodeEnvironment } from '../../src/main/node-environment.js'
 import type { ProcessRunner } from '../../src/main/platform/process-runner.js'
 import { UpdateLock } from '../../src/main/update-lock.js'
@@ -105,5 +105,55 @@ describe('DSH updater', () => {
       rolledBack: true
     })
     expect(store.restored).toBe(1)
+  })
+
+  it('prepare stages a release without touching the active selection', async () => {
+    const store = createStore()
+    const updater = new DshUpdater(store, { async restart() { return true } }, new UpdateLock(), logger, runner, detector)
+    await expect(updater.prepare('0.1.0-rc.6')).resolves.toEqual(newSelection)
+    expect(store.selected).toEqual([])
+    expect(store.restored).toBe(0)
+  })
+
+  it('apply switches the selection and keeps a healthy release', async () => {
+    const store = createStore()
+    const updater = new DshUpdater(store, { async restart() { return true } }, new UpdateLock(), logger, runner, detector)
+    await expect(updater.apply(newSelection)).resolves.toEqual({
+      version: '0.1.0-rc.6',
+      rolledBack: false
+    })
+    expect(store.selected).toEqual([newSelection])
+  })
+
+  it('passes registry and proxy options through to the store install', async () => {
+    const installOptions: DshInstallOptions[] = []
+    const store: DshUpdateStore = {
+      ...createStore(),
+      async install(_environment, _version, options) {
+        installOptions.push(options ?? {})
+        return { selection: newSelection, binaryPath: 'C:\\dsh\\bin.js' }
+      }
+    }
+    const updater = new DshUpdater(
+      store,
+      { async restart() { return true } },
+      new UpdateLock(),
+      logger,
+      runner,
+      detector,
+      {
+        registryUrl: 'https://registry.npmmirror.com',
+        proxyUrl: 'http://127.0.0.1:7890',
+        httpsProxyUrl: 'http://127.0.0.1:7890'
+      }
+    )
+    await updater.prepare('0.1.0-rc.6')
+    expect(installOptions).toEqual([
+      {
+        registryUrl: 'https://registry.npmmirror.com',
+        proxyUrl: 'http://127.0.0.1:7890',
+        httpsProxyUrl: 'http://127.0.0.1:7890'
+      }
+    ])
   })
 })
