@@ -61,13 +61,23 @@ export class StartupOrchestrator {
     )
     let bundledNodeDirectory: string | null = null
     if (this.extractor) {
-      try {
-        bundledNodeDirectory = await this.extractor.nodeRuntimeDirectory()
-        if (bundledNodeDirectory) {
-          await this.logger.write('desktop', `Bundled Node runtime ready at ${bundledNodeDirectory}`)
-        }
-      } catch (error) {
-        await this.logger.write('desktop', `Bundled Node runtime unavailable: ${String(error)}`)
+      // Extract the Node and DSH runtimes concurrently: on a first launch they
+      // are independent ~100 MB / ~250 MB archives, and doing them serially made
+      // the built-in environment check take minutes.
+      const [nodeResult, dshResult] = await Promise.allSettled([
+        this.extractor.nodeRuntimeDirectory(),
+        this.extractor.dshRuntimeDirectory()
+      ])
+      if (nodeResult.status === 'fulfilled' && nodeResult.value) {
+        bundledNodeDirectory = nodeResult.value
+        await this.logger.write('desktop', `Bundled Node runtime ready at ${bundledNodeDirectory}`)
+      } else if (nodeResult.status === 'rejected') {
+        await this.logger.write('desktop', `Bundled Node runtime unavailable: ${String(nodeResult.reason)}`)
+      }
+      if (dshResult.status === 'fulfilled' && dshResult.value) {
+        await this.logger.write('desktop', `Bundled DSH runtime ready at ${dshResult.value}`)
+      } else if (dshResult.status === 'rejected') {
+        await this.logger.write('desktop', `Bundled DSH runtime unavailable: ${String(dshResult.reason)}`)
       }
     }
     this.windows.sendStatus(

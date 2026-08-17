@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import semver from 'semver'
 import { NODE_VERSION_RANGE } from '../shared/config.js'
@@ -45,6 +45,27 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Reads the npm version shipped inside a bundled Node runtime without spawning
+ * npm-cli. Executing `node node_modules/npm/bin/npm-cli.js --version` costs
+ * ~1.5–2.5 s on every startup because npm loads its full module tree in-process;
+ * the bundled manifest is SHA-256 verified before extraction, so the packaged
+ * version string is a trustworthy and effectively free substitute. Falls back to
+ * probing npm-cli when the manifest is missing (defensive path).
+ */
+async function bundledNpmVersion(directory: string, runner: ProcessRunner, nodePath: string, npmCliPath: string): Promise<string | null> {
+  try {
+    const raw = await readFile(join(directory, 'node_modules', 'npm', 'package.json'), 'utf8')
+    const version = semver.clean(String((JSON.parse(raw) as { version?: unknown }).version ?? ''))
+    if (version) return version
+  } catch {
+    // Missing or unreadable manifest — fall through to npm-cli probing.
+  }
+  const npmResult = await runner(nodePath, [npmCliPath, '--version'], { timeoutMs: 5_000 })
+  const probed = semver.clean(npmResult.stdout.trim())
+  return npmResult.exitCode === 0 && probed ? probed : null
+}
+
 async function detectBundledNode(
   runner: ProcessRunner,
   directory: string
@@ -57,9 +78,8 @@ async function detectBundledNode(
   if (nodeResult.exitCode !== 0 || !nodeVersion || !semver.satisfies(nodeVersion, NODE_VERSION_RANGE)) {
     return null
   }
-  const npmResult = await runner(nodePath, [npmCliPath, '--version'], { timeoutMs: 5_000 })
-  const npmVersion = semver.clean(npmResult.stdout.trim())
-  if (npmResult.exitCode !== 0 || !npmVersion) return null
+  const npmVersion = await bundledNpmVersion(directory, runner, nodePath, npmCliPath)
+  if (!npmVersion) return null
   return { ok: true, source: 'bundled', nodePath, npmPath: '', npmCliPath, nodeVersion, npmVersion }
 }
 

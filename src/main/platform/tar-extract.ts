@@ -1,12 +1,83 @@
 import { createReadStream } from 'node:fs'
-import { mkdir, open } from 'node:fs/promises'
-import { dirname, resolve, sep } from 'node:path'
+import { mkdir, open, readdir, rm, stat } from 'node:fs/promises'
+import { dirname, join, resolve, sep } from 'node:path'
 import { createGunzip } from 'node:zlib'
+import { runProcess, type ProcessRunner } from './process-runner.js'
 
 const BLOCK_SIZE = 512
 
+/**
+ * Windows 10 1803+ ships bsdtar at %SystemRoot%\System32\tar.exe. Extracting the
+ * bundled runtimes through it is an order of magnitude faster than the pure-JS
+ * fallback below (native C, buffered I/O, no per-512-byte-block syscalls).
+ * The archive is always SHA-256 verified by the caller against the shipped
+ * manifest before extraction, and bsdtar also sanitises absolute / `..` paths,
+ * so the native path retains the same guarantees as the JS one.
+ */
+function systemTarPath(): string {
+  return join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+}
+
 export interface ExtractTarGzOptions {
   readonly stripComponents?: number
+  /**
+   * `true` — always use the system tar and fail if it is unavailable.
+   * `false` — always use the pure-JS extractor.
+   * `undefined` (default) — use the system tar on Windows when present, and
+   * fall back to pure JS if it is missing or fails.
+   */
+  readonly native?: boolean
+  readonly runner?: ProcessRunner
+}
+
+async function systemTarUsable(runner: ProcessRunner): Promise<boolean> {
+  if (process.platform !== 'win32') return false
+  // `DSH_TAR_EXTRACTOR=js` forces the pure-JS path (hermetic tests, debugging).
+  if (process.env.DSH_TAR_EXTRACTOR === 'js') return false
+  try {
+    await stat(systemTarPath())
+  } catch {
+    return false
+  }
+  const probe = await runner(systemTarPath(), ['--version'], { timeoutMs: 5_000 })
+  return probe.exitCode === 0
+}
+
+async function extractWithSystemTar(
+  runner: ProcessRunner,
+  archivePath: string,
+  destination: string,
+  stripComponents: number
+): Promise<void> {
+  await mkdir(destination, { recursive: true })
+  const args = ['-xzf', archivePath, '-C', destination]
+  if (stripComponents > 0) args.push('--strip-components', String(stripComponents))
+  const result = await runner(systemTarPath(), args, { timeoutMs: 15 * 60_000 })
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `System tar extraction failed: ${result.stderr.trim() || `exit code ${String(result.exitCode)}`}`
+    )
+  }
+}
+
+async function countExtractedFiles(root: string): Promise<number> {
+  let count = 0
+  const stack = [root]
+  while (stack.length > 0) {
+    const directory = stack.pop() as string
+    let entries
+    try {
+      entries = await readdir(directory, { withFileTypes: true })
+    } catch {
+      // A missing or partially removed destination counts as zero files.
+      continue
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) stack.push(join(directory, entry.name))
+      else count += 1
+    }
+  }
+  return count
 }
 
 export function resolveEntryPath(
@@ -140,64 +211,108 @@ async function writeData(reader: TarStreamReader, target: string, size: number):
   }
 }
 
+async function extractTarGzPure(
+  archivePath: string,
+  destination: string,
+  stripComponents: number
+): Promise<number> {
+  const root = resolve(destination)
+  await mkdir(root, { recursive: true })
+  // `pipe` does not forward source errors, so a missing or unreadable archive
+  // would otherwise leave the extraction looping forever; race the loop against
+  // stream failures so callers get a rejection instead of a hang.
+  let fail: ((error: Error) => void) | null = null
+  const failure = new Promise<never>((_resolve, reject) => {
+    fail = reject
+  })
+  const source = createReadStream(archivePath)
+  const gunzip = createGunzip()
+  const failWith = (error: Error): void => {
+    if (error.message.includes('unexpected end of file')) {
+      fail?.(new Error('Truncated tar archive'))
+    } else {
+      fail?.(error)
+    }
+  }
+  source.on('error', failWith)
+  gunzip.on('error', failWith)
+  const reader = new TarStreamReader(source.pipe(gunzip))
+  let entries = 0
+  let paxPath: string | null = null
+  let paxSize: number | null = null
+
+  const extract = async (): Promise<number> => {
+    try {
+      for (;;) {
+        const block = await reader.readBlock()
+        if (block === null) break
+        if (block.every((byte) => byte === 0)) {
+          await reader.readBlock()
+          break
+        }
+        const header = parseTarHeader(block)
+        if (header.type === 'x' || header.type === 'g') {
+          const pax = parsePaxRecords(await readData(reader, header.size))
+          if (pax.path !== undefined) paxPath = pax.path
+          if (pax.size !== undefined) paxSize = pax.size
+          continue
+        }
+        const entryName = paxPath ?? header.name
+        paxPath = null
+        const entrySize = paxSize ?? header.size
+        paxSize = null
+        const target = resolveEntryPath(entryName, root, stripComponents)
+        if (target === null) {
+          await skipData(reader, entrySize)
+          continue
+        }
+        if (header.type === '5') {
+          await mkdir(target, { recursive: true })
+          continue
+        }
+        if (header.type === '2' || header.type === '3' || header.type === '1') {
+          await skipData(reader, entrySize)
+          continue
+        }
+        if (header.type !== '0' && header.type !== '\u0000' && header.type !== '7') {
+          await skipData(reader, entrySize)
+          continue
+        }
+        await mkdir(dirname(target), { recursive: true })
+        await writeData(reader, target, entrySize)
+        entries += 1
+      }
+      return entries
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('unexpected end of file')) {
+        throw new Error('Truncated tar archive')
+      }
+      throw error
+    }
+  }
+
+  return await Promise.race([extract(), failure])
+}
+
 export async function extractTarGz(
   archivePath: string,
   destination: string,
   options: ExtractTarGzOptions = {}
 ): Promise<number> {
   const stripComponents = options.stripComponents ?? 0
-  const root = resolve(destination)
-  await mkdir(root, { recursive: true })
-  const reader = new TarStreamReader(createReadStream(archivePath).pipe(createGunzip()))
-  let entries = 0
-  let paxPath: string | null = null
-  let paxSize: number | null = null
+  const runner = options.runner ?? runProcess
 
-  try {
-    for (;;) {
-      const block = await reader.readBlock()
-      if (block === null) break
-      if (block.every((byte) => byte === 0)) {
-        await reader.readBlock()
-        break
-      }
-      const header = parseTarHeader(block)
-      if (header.type === 'x' || header.type === 'g') {
-        const pax = parsePaxRecords(await readData(reader, header.size))
-        if (pax.path !== undefined) paxPath = pax.path
-        if (pax.size !== undefined) paxSize = pax.size
-        continue
-      }
-      const entryName = paxPath ?? header.name
-      paxPath = null
-      const entrySize = paxSize ?? header.size
-      paxSize = null
-      const target = resolveEntryPath(entryName, root, stripComponents)
-      if (target === null) {
-        await skipData(reader, entrySize)
-        continue
-      }
-      if (header.type === '5') {
-        await mkdir(target, { recursive: true })
-        continue
-      }
-      if (header.type === '2' || header.type === '3' || header.type === '1') {
-        await skipData(reader, entrySize)
-        continue
-      }
-      if (header.type !== '0' && header.type !== '\u0000' && header.type !== '7') {
-        await skipData(reader, entrySize)
-        continue
-      }
-      await mkdir(dirname(target), { recursive: true })
-      await writeData(reader, target, entrySize)
-      entries += 1
+  if (options.native !== false && (options.native === true || (await systemTarUsable(runner)))) {
+    try {
+      await extractWithSystemTar(runner, archivePath, destination, stripComponents)
+      return await countExtractedFiles(destination)
+    } catch (error) {
+      if (options.native === true) throw error
+      // Auto mode: a failed (possibly partial) native extraction must not
+      // poison the pure-JS fallback with `wx` conflicts, so start it clean.
+      await rm(destination, { recursive: true, force: true })
     }
-    return entries
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('unexpected end of file')) {
-      throw new Error('Truncated tar archive')
-    }
-    throw error
   }
+
+  return await extractTarGzPure(archivePath, destination, stripComponents)
 }
