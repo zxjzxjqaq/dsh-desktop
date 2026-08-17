@@ -10,8 +10,8 @@ export interface BundledArchivesManifest {
   readonly schema: number
   readonly version: string
   readonly archives: {
-    readonly node: { readonly name: string; readonly sha256: string }
-    readonly dsh: { readonly name: string; readonly sha256: string }
+    readonly node: { readonly name: string; readonly sha256: string; readonly entries?: number }
+    readonly dsh: { readonly name: string; readonly sha256: string; readonly entries?: number }
   }
 }
 
@@ -22,10 +22,17 @@ export interface ExtractedRuntimeManifest {
   readonly extractedAt: string
 }
 
+export interface RuntimeExtractionProgress {
+  readonly kind: 'node' | 'dsh'
+  readonly done: number
+  readonly total: number | null
+}
+
 export interface RuntimeExtractorOptions {
   readonly resourcesDirectory: string
   readonly logger?: { write(channel: 'desktop', message: string): Promise<void> }
   readonly extractor?: typeof extractTarGz
+  readonly onProgress?: (progress: RuntimeExtractionProgress) => void
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -83,7 +90,8 @@ export class RuntimeExtractor {
     }
     const archive = join(this.options.resourcesDirectory, manifest.archives[kind].name)
     if (!(await exists(archive))) return null
-    await this.extractArchive(archive, target, manifest.version, manifest.archives[kind].sha256)
+    const expectedEntries = manifest.archives[kind].entries ?? null
+    await this.extractArchive(archive, target, manifest.version, manifest.archives[kind].sha256, kind, expectedEntries)
     return target
   }
 
@@ -103,13 +111,20 @@ export class RuntimeExtractor {
     archive: string,
     target: string,
     version: string,
-    expectedSha256: string
+    expectedSha256: string,
+    kind: 'node' | 'dsh',
+    expectedEntries: number | null
   ): Promise<void> {
     const actualSha256 = await sha256File(archive)
     if (actualSha256 !== expectedSha256) throw new Error(`Bundled runtime archive checksum mismatch: ${archive}`)
     await rm(target, { recursive: true, force: true })
     await mkdir(target, { recursive: true })
-    const entries = await this.extractor(archive, target, { stripComponents: 1 })
+    this.options.onProgress?.({ kind, done: 0, total: expectedEntries })
+    const entries = await this.extractor(archive, target, {
+      stripComponents: 1,
+      onProgress: (done) => this.options.onProgress?.({ kind, done, total: expectedEntries })
+    })
+    this.options.onProgress?.({ kind, done: entries, total: expectedEntries })
     await writeJsonAtomic(join(target, 'runtime-manifest.json'), {
       schema: RUNTIME_ARCHIVE_SCHEMA,
       version,

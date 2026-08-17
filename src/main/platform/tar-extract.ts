@@ -28,6 +28,56 @@ export interface ExtractTarGzOptions {
    */
   readonly native?: boolean
   readonly runner?: ProcessRunner
+  /** 解压进度回调：已完成（写入）的文件数，内部节流；total 由调用方结合归档清单提供 */
+  readonly onProgress?: (files: number) => void
+}
+
+const PROGRESS_INTERVAL_MS = 150
+
+interface ProgressSink {
+  report(files: number): void
+  flush(files: number): void
+}
+
+function createProgressSink(report: ((files: number) => void) | undefined): ProgressSink {
+  let lastReportAt = 0
+  return {
+    report(files: number): void {
+      if (!report) return
+      const now = Date.now()
+      if (now - lastReportAt >= PROGRESS_INTERVAL_MS) {
+        lastReportAt = now
+        report(files)
+      }
+    },
+    flush(files: number): void {
+      if (report) report(files)
+    }
+  }
+}
+
+/**
+ * Counts `x <name>` lines emitted by `tar -v`. bsdtar prints directory entries
+ * with a trailing '/', so counting only non-slash lines yields the plain-file
+ * count, which matches the entry totals recorded in the runtime manifest.
+ */
+class VerboseTarProgress {
+  private pending = ''
+  private files = 0
+
+  public push(chunk: string): void {
+    const text = `${this.pending}${chunk}`
+    const lines = text.split(/\r?\n/)
+    this.pending = lines.pop() ?? ''
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed.startsWith('x ') && !trimmed.endsWith('/')) this.files += 1
+    }
+  }
+
+  public get count(): number {
+    return this.files
+  }
 }
 
 async function systemTarUsable(runner: ProcessRunner): Promise<boolean> {
@@ -47,12 +97,22 @@ async function extractWithSystemTar(
   runner: ProcessRunner,
   archivePath: string,
   destination: string,
-  stripComponents: number
+  stripComponents: number,
+  progress: ProgressSink
 ): Promise<void> {
   await mkdir(destination, { recursive: true })
-  const args = ['-xzf', archivePath, '-C', destination]
+  const args = ['-xvzf', archivePath, '-C', destination]
   if (stripComponents > 0) args.push('--strip-components', String(stripComponents))
-  const result = await runner(systemTarPath(), args, { timeoutMs: 15 * 60_000 })
+  const parser = new VerboseTarProgress()
+  const onChunk = (chunk: string): void => {
+    parser.push(chunk)
+    progress.report(parser.count)
+  }
+  const result = await runner(systemTarPath(), args, {
+    timeoutMs: 15 * 60_000,
+    onStdout: onChunk,
+    onStderr: onChunk
+  })
   if (result.exitCode !== 0) {
     throw new Error(
       `System tar extraction failed: ${result.stderr.trim() || `exit code ${String(result.exitCode)}`}`
@@ -214,7 +274,8 @@ async function writeData(reader: TarStreamReader, target: string, size: number):
 async function extractTarGzPure(
   archivePath: string,
   destination: string,
-  stripComponents: number
+  stripComponents: number,
+  progress: ProgressSink
 ): Promise<number> {
   const root = resolve(destination)
   await mkdir(root, { recursive: true })
@@ -281,6 +342,7 @@ async function extractTarGzPure(
         await mkdir(dirname(target), { recursive: true })
         await writeData(reader, target, entrySize)
         entries += 1
+        progress.report(entries)
       }
       return entries
     } catch (error) {
@@ -301,11 +363,14 @@ export async function extractTarGz(
 ): Promise<number> {
   const stripComponents = options.stripComponents ?? 0
   const runner = options.runner ?? runProcess
+  const progress = createProgressSink(options.onProgress)
 
   if (options.native !== false && (options.native === true || (await systemTarUsable(runner)))) {
     try {
-      await extractWithSystemTar(runner, archivePath, destination, stripComponents)
-      return await countExtractedFiles(destination)
+      await extractWithSystemTar(runner, archivePath, destination, stripComponents, progress)
+      const files = await countExtractedFiles(destination)
+      progress.flush(files)
+      return files
     } catch (error) {
       if (options.native === true) throw error
       // Auto mode: a failed (possibly partial) native extraction must not
@@ -314,5 +379,7 @@ export async function extractTarGz(
     }
   }
 
-  return await extractTarGzPure(archivePath, destination, stripComponents)
+  const files = await extractTarGzPure(archivePath, destination, stripComponents, progress)
+  progress.flush(files)
+  return files
 }

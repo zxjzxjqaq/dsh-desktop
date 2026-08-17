@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { BUNDLED_NODE_VERSION, RUNTIME_ARCHIVE_SCHEMA } from '../src/shared/config.js'
 
@@ -8,8 +8,8 @@ interface ArchivesManifest {
   readonly schema: number
   readonly version: string
   readonly archives: {
-    readonly node?: { readonly name: string; readonly sha256: string }
-    readonly dsh?: { readonly name: string; readonly sha256: string }
+    readonly node?: { readonly name: string; readonly sha256: string; readonly entries?: number }
+    readonly dsh?: { readonly name: string; readonly sha256: string; readonly entries?: number }
   }
 }
 
@@ -32,6 +32,15 @@ async function exists(path: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
     throw error
   }
+}
+
+async function fileCount(directory: string): Promise<number> {
+  let count = 0
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    count += entry.isDirectory() ? await fileCount(path) : 1
+  }
+  return count
 }
 
 async function readManifest(): Promise<ArchivesManifest | null> {
@@ -98,7 +107,13 @@ if (!(await isPrepared())) {
   await writeManifest({
     schema: RUNTIME_ARCHIVE_SCHEMA,
     version: nodeVersion,
-    archives: { node: { name: archiveName, sha256: await sha256(archivePath) } }
+    archives: {
+      node: {
+        name: archiveName,
+        sha256: await sha256(archivePath),
+        entries: await fileCount(extractedDirectory)
+      }
+    }
   })
 }
 

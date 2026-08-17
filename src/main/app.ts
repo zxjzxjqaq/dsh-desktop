@@ -87,7 +87,11 @@ if (!hasSingleInstanceLock) {
     const logger = new FileLogger(paths.logs)
     await logger.prune()
     const extractor = app.isPackaged
-      ? new RuntimeExtractor(paths, { resourcesDirectory: process.resourcesPath, logger })
+      ? new RuntimeExtractor(paths, {
+          resourcesDirectory: process.resourcesPath,
+          logger,
+          onProgress: (progress) => orchestrator?.reportRuntimeProgress(progress)
+        })
       : null
     const packages = new DshPackageManager(paths, {
       extractor

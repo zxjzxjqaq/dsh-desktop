@@ -118,8 +118,8 @@ interface ArchivesManifest {
   readonly schema: number
   readonly version: string
   readonly archives: {
-    readonly node?: { readonly name: string; readonly sha256: string }
-    readonly dsh?: { readonly name: string; readonly sha256: string }
+    readonly node?: { readonly name: string; readonly sha256: string; readonly entries?: number }
+    readonly dsh?: { readonly name: string; readonly sha256: string; readonly entries?: number }
   }
 }
 
@@ -146,7 +146,11 @@ execFileSync(
   { stdio: 'pipe' }
 )
 await mergeArchivesManifest({
-  dsh: { name: archiveName, sha256: sha256(await readFile(archivePath)) }
+  dsh: {
+    name: archiveName,
+    sha256: sha256(await readFile(archivePath)),
+    entries: inspected.files
+  }
 })
 
 process.stdout.write(`${JSON.stringify({ target, version: INITIAL_DSH_VERSION, archive: archivePath, ...inspected }, null, 2)}\n`)

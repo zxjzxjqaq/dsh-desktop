@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { RuntimeExtractor } from '../../src/main/runtime-extractor.js'
+import { RuntimeExtractor, type RuntimeExtractionProgress } from '../../src/main/runtime-extractor.js'
 import { createAppPaths } from '../../src/main/platform/app-paths.js'
 
 const roots: string[] = []
@@ -53,8 +53,8 @@ async function fixture(): Promise<Fixture> {
     schema: 1,
     version: '24.15.0',
     archives: {
-      node: { name: 'node-runtime-24.15.0.tar.gz', sha256: await sha256(nodeArchive) },
-      dsh: { name: 'dsh-runtime-0.1.0-rc.6.tar.gz', sha256: await sha256(dshArchive) }
+      node: { name: 'node-runtime-24.15.0.tar.gz', sha256: await sha256(nodeArchive), entries: 2 },
+      dsh: { name: 'dsh-runtime-0.1.0-rc.6.tar.gz', sha256: await sha256(dshArchive), entries: 2 }
     }
   }))
   return { resources, paths: createAppPaths(join(workspace, 'user-data')) }
@@ -82,6 +82,24 @@ describe('runtime extractor', () => {
     const second = await extractor.nodeRuntimeDirectory()
     expect(second).toBe(first)
     expect(await readFile(marker, 'utf8')).toBe(before)
+  })
+
+  it('reports extraction progress against the manifest totals', async () => {
+    const { resources, paths } = await fixture()
+    const events: RuntimeExtractionProgress[] = []
+    const extractor = new RuntimeExtractor(paths, {
+      resourcesDirectory: resources,
+      onProgress: (event) => events.push(event)
+    })
+    expect(await extractor.nodeRuntimeDirectory()).not.toBeNull()
+    expect(await extractor.dshRuntimeDirectory()).not.toBeNull()
+
+    const nodeEvents = events.filter((event) => event.kind === 'node')
+    const dshEvents = events.filter((event) => event.kind === 'dsh')
+    expect(nodeEvents[0]).toEqual({ kind: 'node', done: 0, total: 2 })
+    expect(nodeEvents[nodeEvents.length - 1]!).toEqual({ kind: 'node', done: 2, total: 2 })
+    expect(dshEvents[0]).toEqual({ kind: 'dsh', done: 0, total: 2 })
+    expect(dshEvents[dshEvents.length - 1]!).toEqual({ kind: 'dsh', done: 2, total: 2 })
   })
 
   it('returns null when archives are absent and rejects on checksum mismatch', async () => {

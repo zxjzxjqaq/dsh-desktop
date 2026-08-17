@@ -27,12 +27,20 @@ export type StartupPhase =
   | 'package-error'
   | 'service-error'
 
+export interface StartupProgress {
+  /** 已完成解压的文件数（跨 Node 与 DSH 两个内置运行环境合并统计） */
+  readonly done: number
+  /** 目标文件总数；旧版清单未记录时为 null，界面退化为不定进度条 */
+  readonly total: number | null
+}
+
 export interface StartupStatus {
   readonly phase: StartupPhase
   readonly title: string
   readonly detail: string
   readonly diagnostic?: string
   readonly actions: readonly StartupAction[]
+  readonly progress?: StartupProgress
 }
 
 export type WorkspaceTab = 'dsh' | 'deepseek'

@@ -12,6 +12,9 @@ export interface RunProcessOptions {
   readonly cwd?: string
   readonly env?: NodeJS.ProcessEnv
   readonly timeoutMs?: number
+  /** 流式接收 stdout 增量（例如 tar -v 的逐文件输出），与完整 stdout 同时保留 */
+  readonly onStdout?: (chunk: string) => void
+  readonly onStderr?: (chunk: string) => void
 }
 
 export type ProcessRunner = (
@@ -35,8 +38,14 @@ export const runProcess: ProcessRunner = async (executable, args, options = {}) 
 
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
-    child.stdout?.on('data', (chunk: string) => (stdout += chunk))
-    child.stderr?.on('data', (chunk: string) => (stderr += chunk))
+    child.stdout?.on('data', (chunk: string) => {
+      stdout += chunk
+      options.onStdout?.(chunk)
+    })
+    child.stderr?.on('data', (chunk: string) => {
+      stderr += chunk
+      options.onStderr?.(chunk)
+    })
 
     const finish = (result: ProcessResult): void => {
       if (settled) return

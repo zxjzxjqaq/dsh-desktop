@@ -4,7 +4,7 @@ import type { DshPackageManager } from './dsh-package-manager.js'
 import { DshServiceManager } from './dsh-service-manager.js'
 import type { FileLogger } from './logging.js'
 import { detectNodeEnvironment, type ValidNodeEnvironment } from './node-environment.js'
-import type { RuntimeExtractor } from './runtime-extractor.js'
+import type { RuntimeExtractionProgress, RuntimeExtractor } from './runtime-extractor.js'
 import type { WindowController } from './window-controller.js'
 
 function status(
@@ -12,9 +12,17 @@ function status(
   title: string,
   detail: string,
   actions: StartupStatus['actions'] = [],
-  diagnostic?: string
+  diagnostic?: string,
+  progress?: StartupStatus['progress']
 ): StartupStatus {
-  return { phase, title, detail, actions, ...(diagnostic ? { diagnostic } : {}) }
+  return {
+    phase,
+    title,
+    detail,
+    actions,
+    ...(diagnostic ? { diagnostic } : {}),
+    ...(progress ? { progress } : {})
+  }
 }
 
 export class StartupOrchestrator {
@@ -23,6 +31,11 @@ export class StartupOrchestrator {
   private environment: ValidNodeEnvironment | null = null
   private activeDshVersion: string | null = null
   private crashRestarts = 0
+  /** 两个内置运行环境各自的最新解压进度，合并成单一进度条展示 */
+  private runtimeProgress: Record<'node' | 'dsh', { done: number; total: number | null }> = {
+    node: { done: 0, total: null },
+    dsh: { done: 0, total: null }
+  }
 
   public constructor(
     private readonly windows: WindowController,
@@ -44,6 +57,25 @@ export class StartupOrchestrator {
       nodeSource: this.environment?.source ?? null,
       npm: this.environment?.npmVersion ?? null
     }
+  }
+
+  /** 由 RuntimeExtractor 上报单归档解压进度，合并后推送启动界面（节流已在解压层完成） */
+  public reportRuntimeProgress(progress: RuntimeExtractionProgress): void {
+    const current = this.runtimeProgress[progress.kind]
+    current.done = Math.max(current.done, progress.done)
+    if (progress.total !== null) current.total = progress.total
+    const done = this.runtimeProgress.node.done + this.runtimeProgress.dsh.done
+    const total =
+      this.runtimeProgress.node.total !== null && this.runtimeProgress.dsh.total !== null
+        ? this.runtimeProgress.node.total + this.runtimeProgress.dsh.total
+        : null
+    const detail =
+      total === null
+        ? `正在解压内置运行环境…（已处理 ${done.toLocaleString()} 个文件）`
+        : `正在解压内置运行环境…（${done.toLocaleString()} / ${total.toLocaleString()} 个文件）`
+    this.windows.sendStatus(
+      status('preparing-runtime', '正在准备运行环境', detail, [], undefined, { done, total })
+    )
   }
 
   public async run(): Promise<boolean> {

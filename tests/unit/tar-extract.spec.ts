@@ -86,6 +86,29 @@ describe('tar.gz extraction', () => {
     ).rejects.toThrow('Truncated')
   })
 
+  it('reports progress as files are written (pure JS)', async () => {
+    const workspace = await root()
+    const source = join(workspace, 'source')
+    await mkdir(join(source, 'd'), { recursive: true })
+    await writeFile(join(source, 'a.txt'), 'a\n')
+    await writeFile(join(source, 'b.txt'), 'b\n')
+    await writeFile(join(source, 'd', 'c.txt'), 'c\n')
+    const archive = join(workspace, 'bundle.tar.gz')
+    createTarGz(source, archive)
+    const values: number[] = []
+    const entries = await extractTarGz(archive, join(workspace, 'dest'), {
+      native: false,
+      stripComponents: 1,
+      onProgress: (files) => values.push(files)
+    })
+    expect(entries).toBe(3)
+    expect(values.length).toBeGreaterThan(0)
+    for (let i = 1; i < values.length; i += 1) {
+      expect(values[i]!).toBeGreaterThanOrEqual(values[i - 1]!)
+    }
+    expect(values[values.length - 1]).toBe(3)
+  })
+
   it('normalizes entry paths safely', () => {
     expect(resolveEntryPath('./a/b.txt', 'C:\\dest', 1)).toBe('C:\\dest\\a\\b.txt')
     expect(resolveEntryPath('./a.txt', 'C:\\dest', 1)).toBe('C:\\dest\\a.txt')
@@ -95,6 +118,41 @@ describe('tar.gz extraction', () => {
   })
 
   describe('native system tar fast path (Windows)', () => {
+    it.skipIf(process.platform !== 'win32')(
+      'streams verbose output into progress counts',
+      async () => {
+        const workspace = await root()
+        const archive = join(workspace, 'bundle.tar.gz')
+        const dest = join(workspace, 'dest')
+        const values: number[] = []
+        const calls: string[][] = []
+        const runner: ProcessRunner = async (_executable, args, options) => {
+          calls.push([...args])
+          if (args.includes('-xvzf')) {
+            // bsdtar -v emits `x <name>` lines; directories end with '/'
+            options?.onStderr?.('x a.txt\nx sub/\nx b.txt\nx c.txt\nx d.txt\n')
+          }
+          return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+        }
+        const previousOverride = process.env.DSH_TAR_EXTRACTOR
+        delete process.env.DSH_TAR_EXTRACTOR
+        try {
+          const entries = await extractTarGz(archive, dest, {
+            stripComponents: 1,
+            runner,
+            onProgress: (files) => values.push(files)
+          })
+          expect(entries).toBe(0) // the fake runner writes no files
+        } finally {
+          if (previousOverride === undefined) delete process.env.DSH_TAR_EXTRACTOR
+          else process.env.DSH_TAR_EXTRACTOR = previousOverride
+        }
+        expect(calls.some((call) => call.includes('-xvzf'))).toBe(true)
+        // 4 plain files counted; the directory line (`x sub/`) is excluded
+        expect(values.some((value) => value === 4)).toBe(true)
+      }
+    )
+
     it.skipIf(process.platform !== 'win32')(
       'delegates to the system tar with strip flags when it is usable',
       async () => {
@@ -115,10 +173,10 @@ describe('tar.gz extraction', () => {
           if (previousOverride === undefined) delete process.env.DSH_TAR_EXTRACTOR
           else process.env.DSH_TAR_EXTRACTOR = previousOverride
         }
-        const tarCall = calls.find((call) => call.includes('-xzf'))
+        const tarCall = calls.find((call) => call.includes('-xvzf'))
         expect(tarCall).toBeDefined()
         expect(tarCall!).toEqual(
-          expect.arrayContaining(['-xzf', archive, '-C', dest, '--strip-components', '1'])
+          expect.arrayContaining(['-xvzf', archive, '-C', dest, '--strip-components', '1'])
         )
       }
     )
