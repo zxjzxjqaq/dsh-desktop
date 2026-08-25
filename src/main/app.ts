@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { rename as renameDir, stat } from 'node:fs/promises'
 import { app, ipcMain, Notification, shell } from 'electron'
 import { DSH_HOST, DSH_PORT, INITIAL_DSH_VERSION, PRODUCT_NAME } from '../shared/config.js'
 import type {
@@ -29,7 +30,8 @@ app.setName(PRODUCT_NAME)
 const localAppData = process.env.LOCALAPPDATA ?? app.getPath('appData')
 const testMode = process.env.DSH_DESKTOP_TEST_MODE === '1'
 const configuredDataRoot = testMode ? process.env.DSH_DESKTOP_DATA_ROOT : undefined
-app.setPath('userData', configuredDataRoot ? join(configuredDataRoot) : join(localAppData, PRODUCT_NAME))
+const dataDir = 'DSH-Desktop' // no spaces — npm --prefix breaks on paths with spaces
+app.setPath('userData', configuredDataRoot ? join(configuredDataRoot) : join(localAppData, dataDir))
 const configuredPort = testMode ? Number(process.env.DSH_DESKTOP_PORT ?? DSH_PORT) : DSH_PORT
 if (!Number.isInteger(configuredPort) || configuredPort < 1 || configuredPort > 65_535) {
   throw new Error('Invalid DSH_DESKTOP_PORT')
@@ -38,6 +40,40 @@ const dshUrl = `http://${DSH_HOST}:${configuredPort}`
 
 const windows = new WindowController(dshUrl)
 let orchestrator: StartupOrchestrator | null = null
+
+/**
+ * Pre-v0.2.3 builds stored user data under `%LOCALAPPDATA%\DSH Desktop`
+ * (a space in the path breaks npm `--prefix` installs). Move that data to the
+ * current space-free location once. Must run before the logger is created,
+ * because the logger (and everything else) derives its paths from userData.
+ */
+async function migrateLegacyUserData(): Promise<void> {
+  const legacyRoot = join(localAppData, PRODUCT_NAME)
+  const currentRoot = app.getPath('userData')
+  if (join(legacyRoot) === join(currentRoot)) return
+  let legacyExists = false
+  try {
+    legacyExists = (await stat(legacyRoot)).isDirectory()
+  } catch {
+    return // no legacy data
+  }
+  if (!legacyExists) return
+  // Never clobber a live new-location tree that already has a version store.
+  try {
+    const exists = (await stat(join(currentRoot, 'dsh'))).isDirectory()
+    if (exists) return
+  } catch {
+    // New location is empty or missing: safe to move.
+  }
+  try {
+    await renameDir(legacyRoot, currentRoot)
+    console.log(`Migrated legacy user data from ${legacyRoot} to ${currentRoot}`)
+  } catch (error) {
+    // Logging infrastructure is not ready yet, so surface via the app's
+    // standard channels later; at minimum do not break startup.
+    console.error(`userData migration failed: ${String(error)} (legacy data remains at ${legacyRoot})`)
+  }
+}
 let supervisor: DshSupervisor | null = null
 let quitting = false
 let currentSettings: AppSettings | null = null
@@ -256,6 +292,7 @@ if (!hasSingleInstanceLock) {
   app.on('second-instance', wakeApp)
 
   void app.whenReady().then(async () => {
+    await migrateLegacyUserData()
     const paths = createAppPaths(app.getPath('userData'))
     const logger = new FileLogger(paths.logs)
     await logger.prune()
