@@ -83,6 +83,7 @@ if (!(await isPrepared())) {
       'install',
       '--prefix',
       target,
+      '--legacy-peer-deps',
       '--omit=dev',
       '--no-audit',
       '--no-fund',

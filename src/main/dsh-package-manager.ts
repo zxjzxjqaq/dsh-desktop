@@ -153,6 +153,7 @@ export class DshPackageManager {
       'install',
       '--prefix',
       stagingDirectory,
+      '--legacy-peer-deps',
       '--omit=dev',
       '--no-audit',
       '--no-fund',
