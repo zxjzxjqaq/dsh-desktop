@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { INITIAL_DSH_VERSION } from '../src/shared/config.js'
+import { installDshRuntime } from '../src/main/dsh-runtime-installer.js'
 import { detectNodeEnvironment } from '../src/main/node-environment.js'
-import { runProcess } from '../src/main/platform/process-runner.js'
 
 interface DshManifest {
   readonly name?: string
@@ -76,24 +76,9 @@ if (!(await isPrepared())) {
   await mkdir(dirname(target), { recursive: true })
   const environment = await detectNodeEnvironment()
   if (!environment.ok) throw new Error(environment.detail)
-  const result = await runProcess(
-    environment.nodePath,
-    [
-      environment.npmCliPath,
-      'install',
-      '--prefix',
-      target,
-      '--legacy-peer-deps',
-      '--omit=dev',
-      '--no-audit',
-      '--no-fund',
-      '--prefer-offline',
-      '--save-exact',
-      `@deepseek-ai/dsh@${INITIAL_DSH_VERSION}`
-    ],
-    { timeoutMs: 15 * 60_000 }
-  )
-  if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `npm exited with ${String(result.exitCode)}`)
+  await installDshRuntime(environment, target, INITIAL_DSH_VERSION, {
+    timeoutMs: 15 * 60_000
+  })
 }
 
 const inspected = await inspectRuntime()

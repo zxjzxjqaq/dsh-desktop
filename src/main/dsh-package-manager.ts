@@ -6,6 +6,7 @@ import type { AppPaths } from './platform/app-paths.js'
 import { versionDirectory } from './platform/app-paths.js'
 import { readJson, writeJsonAtomic } from './platform/atomic-json.js'
 import { runProcess, type ProcessRunner } from './platform/process-runner.js'
+import { installDshRuntime } from './dsh-runtime-installer.js'
 import type { RuntimeExtractor } from './runtime-extractor.js'
 import type { ValidNodeEnvironment } from './node-environment.js'
 
@@ -148,29 +149,17 @@ export class DshPackageManager {
     await mkdir(this.paths.staging, { recursive: true })
     const stagingDirectory = join(this.paths.staging, `${version}-${randomUUID()}`)
     await mkdir(stagingDirectory, { recursive: true })
-    const args = [
-      environment.npmCliPath,
-      'install',
-      '--prefix',
-      stagingDirectory,
-      '--legacy-peer-deps',
-      '--omit=dev',
-      '--no-audit',
-      '--no-fund',
-      '--save-exact'
-    ]
-    if (options.registryUrl) args.push(`--registry=${options.registryUrl}`)
-    if (options.proxyUrl) args.push(`--proxy=${options.proxyUrl}`)
-    if (options.httpsProxyUrl) args.push(`--https-proxy=${options.httpsProxyUrl}`)
-    args.push(`@deepseek-ai/dsh@${version}`)
-    const result = await this.runner(
-      environment.nodePath,
-      args,
-      { timeoutMs: 10 * 60_000 }
-    )
-    if (result.exitCode !== 0) {
+    try {
+      await installDshRuntime(environment, stagingDirectory, version, {
+        registryUrl: options.registryUrl,
+        proxyUrl: options.proxyUrl,
+        httpsProxyUrl: options.httpsProxyUrl,
+        runner: this.runner,
+        timeoutMs: 10 * 60_000
+      })
+    } catch (error) {
       await rm(stagingDirectory, { recursive: true, force: true })
-      throw new Error(result.stderr.trim() || `npm.cmd exited with ${String(result.exitCode)}`)
+      throw error
     }
 
     const resolvedStaging = resolve(stagingDirectory)
