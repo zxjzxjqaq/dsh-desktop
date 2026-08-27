@@ -35,6 +35,17 @@ interface PeerRequest {
   readonly range: string
 }
 
+/** Registry / proxy flags shared by every npm invocation the app performs. */
+export function npmNetworkArguments(
+  options: Pick<DshRuntimeInstallOptions, 'registryUrl' | 'proxyUrl' | 'httpsProxyUrl'>
+): string[] {
+  const args: string[] = []
+  if (options.registryUrl) args.push(`--registry=${options.registryUrl}`)
+  if (options.proxyUrl) args.push(`--proxy=${options.proxyUrl}`)
+  if (options.httpsProxyUrl) args.push(`--https-proxy=${options.httpsProxyUrl}`)
+  return args
+}
+
 function baseArgs(npmCliPath: string, prefix: string, options: DshRuntimeInstallOptions): string[] {
   const args = [
     npmCliPath,
@@ -46,9 +57,7 @@ function baseArgs(npmCliPath: string, prefix: string, options: DshRuntimeInstall
     '--no-audit',
     '--no-fund'
   ]
-  if (options.registryUrl) args.push(`--registry=${options.registryUrl}`)
-  if (options.proxyUrl) args.push(`--proxy=${options.proxyUrl}`)
-  if (options.httpsProxyUrl) args.push(`--https-proxy=${options.httpsProxyUrl}`)
+  args.push(...npmNetworkArguments(options))
   return args
 }
 

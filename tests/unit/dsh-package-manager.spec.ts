@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { DshPackageManager } from '../../src/main/dsh-package-manager.js'
 import { RuntimeExtractor } from '../../src/main/runtime-extractor.js'
 import { createAppPaths, versionDirectory } from '../../src/main/platform/app-paths.js'
+import { resolveTarExecutable } from '../../src/main/platform/tar-extract.js'
 import type { ProcessRunner } from '../../src/main/platform/process-runner.js'
 
 const roots: string[] = []
@@ -57,7 +58,7 @@ describe('DSH package manager', () => {
     await mkdir(resources, { recursive: true })
     const archiveName = `dsh-runtime-${version}.tar.gz`
     const archivePath = join(resources, archiveName)
-    execFileSync('tar', ['-czf', archivePath, '-C', source, '.'], { stdio: 'pipe' })
+    execFileSync(resolveTarExecutable(), ['-czf', archivePath, '-C', source, '.'], { stdio: 'pipe' })
     await writeFile(join(resources, 'runtime-manifest.json'), JSON.stringify({
       schema: 1,
       version,
@@ -189,7 +190,7 @@ describe('DSH package manager', () => {
     const resources = resolve(workspace, 'resources')
     await mkdir(resources, { recursive: true })
     const archiveName = 'dsh-runtime.tar.gz'
-    execFileSync('tar', ['-czf', join(resources, archiveName), '-C', source, '.'], { stdio: 'pipe' })
+    execFileSync(resolveTarExecutable(), ['-czf', join(resources, archiveName), '-C', source, '.'], { stdio: 'pipe' })
     await writeFile(join(resources, 'runtime-manifest.json'), JSON.stringify({
       schema: 1,
       version,

@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { INITIAL_DSH_VERSION } from '../src/shared/config.js'
 import { installDshRuntime } from '../src/main/dsh-runtime-installer.js'
 import { detectNodeEnvironment } from '../src/main/node-environment.js'
+import { resolveTarExecutable } from '../src/main/platform/tar-extract.js'
 
 interface DshManifest {
   readonly name?: string
@@ -127,7 +128,7 @@ async function mergeArchivesManifest(partial: Partial<ArchivesManifest['archives
 
 await mkdir(archivesRoot, { recursive: true })
 execFileSync(
-  'tar',
+  resolveTarExecutable(),
   ['-czf', archivePath, '-C', resolve('.artifacts', 'bundled-dsh'), INITIAL_DSH_VERSION],
   { stdio: 'pipe' }
 )

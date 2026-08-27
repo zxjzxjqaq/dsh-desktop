@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { RuntimeExtractor, type RuntimeExtractionProgress } from '../../src/main/runtime-extractor.js'
 import { createAppPaths } from '../../src/main/platform/app-paths.js'
+import { resolveTarExecutable } from '../../src/main/platform/tar-extract.js'
 
 const roots: string[] = []
 async function root(): Promise<string> {
@@ -46,8 +47,8 @@ async function fixture(): Promise<Fixture> {
 
   const nodeArchive = join(resources, 'node-runtime-24.15.0.tar.gz')
   const dshArchive = join(resources, 'dsh-runtime-0.1.0-rc.6.tar.gz')
-  execFileSync('tar', ['-czf', nodeArchive, '-C', nodeSource, '.'], { stdio: 'pipe' })
-  execFileSync('tar', ['-czf', dshArchive, '-C', dshSource, '.'], { stdio: 'pipe' })
+  execFileSync(resolveTarExecutable(), ['-czf', nodeArchive, '-C', nodeSource, '.'], { stdio: 'pipe' })
+  execFileSync(resolveTarExecutable(), ['-czf', dshArchive, '-C', dshSource, '.'], { stdio: 'pipe' })
 
   await writeFile(join(resources, 'runtime-manifest.json'), JSON.stringify({
     schema: 1,

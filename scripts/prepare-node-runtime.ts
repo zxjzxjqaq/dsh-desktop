@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { BUNDLED_NODE_VERSION, RUNTIME_ARCHIVE_SCHEMA } from '../src/shared/config.js'
+import { resolveTarExecutable } from '../src/main/platform/tar-extract.js'
 
 interface ArchivesManifest {
   readonly schema: number
@@ -98,12 +99,16 @@ if (!(await isPrepared())) {
   }
 
   await rm(extractedDirectory, { recursive: true, force: true })
-  execFileSync('tar', ['-xf', zipPath, '-C', extractRoot], { stdio: 'pipe' })
+  execFileSync(resolveTarExecutable(), ['-xf', zipPath, '-C', extractRoot], { stdio: 'pipe' })
   await rm(zipPath, { force: true })
   await mkdir(archivesRoot, { recursive: true })
-  execFileSync('tar', ['-czf', archivePath, '-C', extractRoot, `node-v${nodeVersion}-win-x64`], {
-    stdio: 'pipe'
-  })
+  execFileSync(
+    resolveTarExecutable(),
+    ['-czf', archivePath, '-C', extractRoot, `node-v${nodeVersion}-win-x64`],
+    {
+      stdio: 'pipe'
+    }
+  )
   await writeManifest({
     schema: RUNTIME_ARCHIVE_SCHEMA,
     version: nodeVersion,

@@ -48,6 +48,7 @@ let orchestrator: StartupOrchestrator | null = null
  * because the logger (and everything else) derives its paths from userData.
  */
 async function migrateLegacyUserData(): Promise<void> {
+  if (testMode) return // Never move the user's real data while running tests.
   const legacyRoot = join(localAppData, PRODUCT_NAME)
   const currentRoot = app.getPath('userData')
   if (join(legacyRoot) === join(currentRoot)) return
@@ -214,12 +215,18 @@ function installUpdateScheduler(
             body: `DSH ${version} 已下载完成，点击“立即重启生效”。`
           })
           ready.on('click', () => {
-            void applyDshUpdate(dshUpdater, prepared).then((result) => {
-              notify(
-                result.rolledBack ? 'DSH 更新验证失败，已回滚' : 'DSH 更新完成',
-                result.rolledBack ? `已恢复 DSH ${result.version}。` : `当前运行 DSH ${result.version}。`
-              )
-            })
+            void applyDshUpdate(dshUpdater, prepared)
+              .then((result) => {
+                notify(
+                  result.rolledBack ? 'DSH 更新验证失败，已回滚' : 'DSH 更新完成',
+                  result.rolledBack ? `已恢复 DSH ${result.version}。` : `当前运行 DSH ${result.version}。`
+                )
+              })
+              .catch((error: unknown) => {
+                // The click handler is outside any dialog/try block; surface
+                // the failure instead of dying as an unhandled rejection.
+                notify('DSH 更新失败', String(error))
+              })
           })
           ready.show()
         }
@@ -342,11 +349,12 @@ if (!hasSingleInstanceLock) {
       logger,
       undefined,
       undefined,
-      {
-        registryUrl: currentSettings.registryUrl,
-        proxyUrl: currentSettings.proxyUrl,
-        httpsProxyUrl: currentSettings.httpsProxyUrl
-      }
+      // Resolve settings lazily so registry/proxy changes apply immediately.
+      () => ({
+        registryUrl: currentSettings?.registryUrl ?? null,
+        proxyUrl: currentSettings?.proxyUrl ?? null,
+        httpsProxyUrl: currentSettings?.httpsProxyUrl ?? null
+      })
     )
     installAppMenu({
       getWindow: () => windows.activeWindow,

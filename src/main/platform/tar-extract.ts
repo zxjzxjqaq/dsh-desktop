@@ -18,6 +18,16 @@ function systemTarPath(): string {
   return join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
 }
 
+/**
+ * Preferred tar executable for build scripts and tests: the absolute System32
+ * bsdtar on Windows. Resolving `tar` from PATH is unsafe there — a Git Bash
+ * GNU tar fails on Windows-style archive paths (`-czf C:\…` reads as a remote
+ * host) and cannot read zip archives at all.
+ */
+export function resolveTarExecutable(): string {
+  return process.platform === 'win32' ? systemTarPath() : 'tar'
+}
+
 export interface ExtractTarGzOptions {
   readonly stripComponents?: number
   /**

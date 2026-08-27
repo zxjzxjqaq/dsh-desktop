@@ -156,4 +156,56 @@ describe('DSH updater', () => {
       }
     ])
   })
+
+  it('resolves install options lazily so settings changes apply without an app restart', async () => {
+    const installOptions: DshInstallOptions[] = []
+    const store: DshUpdateStore = {
+      ...createStore(),
+      async install(_environment, _version, options) {
+        installOptions.push(options ?? {})
+        return { selection: newSelection, binaryPath: 'C:\\dsh\\bin.js' }
+      }
+    }
+    const settingsRef: { current: DshInstallOptions } = {
+      current: { registryUrl: null, proxyUrl: null, httpsProxyUrl: null }
+    }
+    const updater = new DshUpdater(
+      store,
+      { async restart() { return true } },
+      new UpdateLock(),
+      logger,
+      runner,
+      detector,
+      () => settingsRef.current
+    )
+    await updater.prepare('0.1.0-rc.6')
+    settingsRef.current = { registryUrl: 'https://registry.npmmirror.com', proxyUrl: null, httpsProxyUrl: null }
+    await updater.prepare('0.1.0-rc.6')
+    expect(installOptions).toEqual([
+      { registryUrl: null, proxyUrl: null, httpsProxyUrl: null },
+      { registryUrl: 'https://registry.npmmirror.com', proxyUrl: null, httpsProxyUrl: null }
+    ])
+  })
+
+  it('sends the configured registry mirror when querying dist-tags', async () => {
+    const calls: string[][] = []
+    const capturingRunner: ProcessRunner = async (_executable, args) => {
+      calls.push([...args])
+      return { exitCode: 0, stdout: JSON.stringify({ latest: '0.1.0-rc.6' }), stderr: '', timedOut: false }
+    }
+    const updater = new DshUpdater(
+      createStore(),
+      { async restart() { return true } },
+      new UpdateLock(),
+      logger,
+      capturingRunner,
+      detector,
+      { registryUrl: 'https://registry.npmmirror.com', httpsProxyUrl: 'http://127.0.0.1:7890' }
+    )
+    await updater.check()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toContain('--registry=https://registry.npmmirror.com')
+    expect(calls[0]).toContain('--https-proxy=http://127.0.0.1:7890')
+    expect(calls[0]).not.toContain('--proxy=http://127.0.0.1:7890')
+  })
 })

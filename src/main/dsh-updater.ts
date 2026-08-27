@@ -1,6 +1,7 @@
 import semver from 'semver'
 import type { DshInstall, DshInstallOptions, DshSelection } from './dsh-package-manager.js'
 import { detectNodeEnvironment, type NodeEnvironment, type ValidNodeEnvironment } from './node-environment.js'
+import { npmNetworkArguments } from './dsh-runtime-installer.js'
 import { runProcess, type ProcessRunner } from './platform/process-runner.js'
 import type { UpdateLock } from './update-lock.js'
 
@@ -40,6 +41,8 @@ export interface UpdateLogger {
 }
 
 export class DshUpdater {
+  private readonly installOptions: () => DshInstallOptions
+
   public constructor(
     private readonly packages: DshUpdateStore,
     private readonly orchestrator: DshRestarter,
@@ -47,8 +50,13 @@ export class DshUpdater {
     private readonly logger: UpdateLogger,
     private readonly runner: ProcessRunner = runProcess,
     private readonly detector: (runner: ProcessRunner) => Promise<NodeEnvironment> = detectNodeEnvironment,
-    private readonly installOptions: DshInstallOptions = {}
-  ) {}
+    installOptions: DshInstallOptions | (() => DshInstallOptions) = {}
+  ) {
+    // Accept a getter so settings changes (registry / proxy) made after launch
+    // take effect immediately instead of only on the next app start.
+    this.installOptions =
+      typeof installOptions === 'function' ? installOptions : () => installOptions
+  }
 
   private async environment() {
     const environment = await this.detector(this.runner)
@@ -60,7 +68,14 @@ export class DshUpdater {
     const environment = await this.environment()
     const result = await this.runner(
       environment.nodePath,
-      [environment.npmCliPath, 'view', '@deepseek-ai/dsh', 'dist-tags', '--json'],
+      [
+        environment.npmCliPath,
+        'view',
+        '@deepseek-ai/dsh',
+        'dist-tags',
+        '--json',
+        ...npmNetworkArguments(this.installOptions())
+      ],
       { timeoutMs: 30_000 }
     )
     if (result.exitCode !== 0) throw new Error(result.stderr.trim() || 'npm registry query failed')
@@ -83,7 +98,7 @@ export class DshUpdater {
   public async prepare(version: string): Promise<DshSelection> {
     return await this.lock.run('dsh-update', async () => {
       const environment = await this.environment()
-      const install = await this.packages.install(environment, version, this.installOptions)
+      const install = await this.packages.install(environment, version, this.installOptions())
       await this.logger.write('updater', `Prepared DSH ${version} at ${install.selection.directory}`)
       return install.selection
     })

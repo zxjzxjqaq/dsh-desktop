@@ -189,6 +189,9 @@ export class StartupOrchestrator {
       await this.windows.showDsh()
       return true
     } catch (error) {
+      // start() already tore down its own child process; drop the stale handle
+      // so `serviceRunning` (and second-instance wake behavior) reflect reality.
+      this.service = null
       const detail = error instanceof Error ? error.message : String(error)
       await this.logger.write('desktop', `DSH service error: ${detail}`)
       this.windows.sendStatus(
@@ -203,6 +206,28 @@ export class StartupOrchestrator {
   }
 
   private async resolveInstall(environment: ValidNodeEnvironment): Promise<DshInstall> {
+    const found = await this.resolveInstalledSelection(environment)
+    if (found) return found
+    this.windows.sendStatus(
+      status(
+        'preparing-dsh',
+        '正在下载 DSH 运行环境',
+        `内置运行环境不可用，正在获取 DSH ${INITIAL_DSH_VERSION}`
+      )
+    )
+    const install = await this.packages.install(environment, INITIAL_DSH_VERSION)
+    await this.packages.select(install.selection)
+    return install
+  }
+
+  /**
+   * Resolve a runnable install from on-disk selection state WITHOUT touching
+   * any UI: prefer current.json, fall back to the bundled runtime. Returns null
+   * when only a network install could produce one. Used by runOnce (with status
+   * messages around it) and by restart(), which must stay silent because it
+   * runs against an already-visible workspace.
+   */
+  private async resolveInstalledSelection(environment: ValidNodeEnvironment): Promise<DshInstall | null> {
     const current = await this.packages.current()
     if (current) {
       try {
@@ -217,16 +242,7 @@ export class StartupOrchestrator {
       await this.packages.select(bundled.selection)
       return bundled
     }
-    this.windows.sendStatus(
-      status(
-        'preparing-dsh',
-        '正在下载 DSH 运行环境',
-        `内置运行环境不可用，正在获取 DSH ${INITIAL_DSH_VERSION}`
-      )
-    )
-    const install = await this.packages.install(environment, INITIAL_DSH_VERSION)
-    await this.packages.select(install.selection)
-    return install
+    return null
   }
 
   private createService(environment: ValidNodeEnvironment, install: DshInstall): DshServiceManager {
@@ -241,21 +257,34 @@ export class StartupOrchestrator {
   }
 
   /**
-   * Restart the DSH service *in place*: stop the child process tree, spawn a
-   * fresh one for the same selected version, wait for health and reconnect the
-   * workspace view. Windows are never touched, so a DeepSeek chat session and
-   * the toolbar keep working across the restart.
+   * Restart the DSH service *in place*: stop the child process tree, resolve
+   * the currently selected release fresh from disk (so an update apply or a
+   * rollback that rewrote current.json actually takes effect), spawn it, wait
+   * for health and reconnect the workspace view. Windows are never touched, so
+   * a DeepSeek chat session and the toolbar keep working across the restart.
    *
-   * Used by the supervisor (watchdog) and the update pipeline.
+   * Used by the supervisor (watchdog), the update pipeline (apply/rollback)
+   * and the manual menu action.
    */
   public async restart(): Promise<boolean> {
     const environment = this.environment
-    const install = this.install
-    if (!environment || !install) {
-      await this.logger.write('desktop', 'Restart requested but the environment/install is not ready')
+    if (!environment) {
+      await this.logger.write('desktop', 'Restart requested but the environment is not ready')
       return false
     }
     await this.stop()
+    let install: DshInstall
+    try {
+      const resolved = await this.resolveInstalledSelection(environment)
+      if (!resolved) throw new Error('No valid DSH selection or bundled fallback is available')
+      install = resolved
+      this.install = install
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      await this.logger.write('desktop', `Restart aborted while resolving the DSH selection: ${detail}`)
+      this.service = null
+      return false
+    }
     const delayMs = this.options.restartAttemptDelayMs ?? 500
     const maxAttempts = this.options.restartMaxAttempts ?? 3
     let lastError: unknown = null
@@ -266,7 +295,10 @@ export class StartupOrchestrator {
         this.service = service
         await service.start()
         this.options.onServiceStarted?.()
-        await this.logger.write('desktop', `DSH ${install.selection.version} restarted in place`)
+        await this.logger.write(
+          'desktop',
+          `DSH ${install.selection.version} restarted in place`
+        )
         this.windows.reloadDsh()
         return true
       } catch (error) {

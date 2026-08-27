@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   extractTarGz,
-  resolveEntryPath
+  resolveEntryPath,
+  resolveTarExecutable
 } from '../../src/main/platform/tar-extract.js'
 import type { ProcessRunner } from '../../src/main/platform/process-runner.js'
 
@@ -22,7 +23,7 @@ afterEach(async () => {
 })
 
 function createTarGz(sourceDir: string, archivePath: string): void {
-  execFileSync('tar', ['-czf', archivePath, '-C', sourceDir, '.'], { stdio: 'pipe' })
+  execFileSync(resolveTarExecutable(), ['-czf', archivePath, '-C', sourceDir, '.'], { stdio: 'pipe' })
 }
 
 describe('tar.gz extraction', () => {

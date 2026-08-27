@@ -21,10 +21,18 @@ export async function writeJsonAtomic(path: string, value: unknown): Promise<voi
 }
 
 export async function readJson<T>(path: string): Promise<T | null> {
+  let content: string
   try {
-    return JSON.parse(await readFile(path, 'utf8')) as T
+    content = await readFile(path, 'utf8')
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw error
+  }
+  try {
+    return JSON.parse(content) as T
+  } catch {
+    // A corrupt file (truncated write, disk issue) must not brick callers that
+    // treat a missing pointer as "no selection"; degrade to the same state.
+    return null
   }
 }
