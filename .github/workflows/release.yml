@@ -33,16 +33,21 @@ jobs:
       - name: Build Windows installer
         run: npm run release:github
 
-      - name: Create GitHub Release with the product design document
+      - name: Create GitHub Release
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          # Release notes are maintained per tag; fall back to the v0.2 design doc.
+          NOTES="docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [ ! -f "$NOTES" ]; then
+            NOTES="docs/superpowers/specs/2026-08-16-dsh-desktop-v0.2-design.md"
+          fi
           gh release create "$GITHUB_REF_NAME" \
             "dist/DSH-Desktop-${VERSION}-Setup.exe" \
             "dist/DSH-Desktop-${VERSION}-Setup.exe.blockmap" \
             dist/latest.yml \
-            docs/superpowers/specs/2026-08-16-dsh-desktop-v0.2-design.md \
             --repo "$GITHUB_REPOSITORY" \
-            --notes-file docs/superpowers/specs/2026-08-16-dsh-desktop-v0.2-design.md
+            --title "DSH Desktop ${GITHUB_REF_NAME}" \
+            --notes-file "$NOTES"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
